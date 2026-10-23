@@ -279,6 +279,19 @@ kingco_select <- kingco_homes |>
 
 head(kingco_select, 10)
 ```
+```{r}
+all_bellevue <- kingco_select |> 
+  summarise(avg = mean(total_val), var = var(total_val))
+all_bellevue
+
+both_views <- kingco_select |> 
+  filter(view_lakewash == 1, view_lakesamm == 1) |> 
+  summarise(avg = mean(total_val), var = var(total_val))
+both_views 
+
+both_views$avg - all_bellevue$avg
+both_views$var - all_bellevue$var
+```
 
 ------------------------------------------------------------------------
 
