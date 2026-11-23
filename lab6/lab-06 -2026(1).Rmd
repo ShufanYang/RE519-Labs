@@ -1,0 +1,490 @@
+---
+title: "Lab 06 Dashboard using Tableau and R + Tableau Together"
+subtitle: "RE 519 Data Analytics and Visualization | Autumn 2026"
+author: "Cody Kuo, Shufan Yang, Zoey Liu" #remember to add to your name when you submit the lab
+date: "11/22/2026"
+output:
+  cleanrmd::html_document_clean:
+    theme: almond
+    toc: true
+    toc_depth: 3
+    css: custom.css
+    mathjax: "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+    md_extensions: +tex_math_dollars+tex_math_single_backslash
+    df_print: paged
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+------------------------------------------------------------------------
+
+<!-- start of the main lab content -->
+
+The due day for each lab can be found on the [course wesbite](https://www.yuehaoyu.com/data-analytics-visualization/). The submission should include Rmd, html, and any other files required to rerun the codes. For Tableau, submit your [**Tableau packaged workbook (.tbwx)**](https://help.tableau.com/current/pro/desktop/en-us/save_savework_packagedworkbooks.htm) This will include any excel files that you attach so that when you share the file anyone with Tableau can open it!
+
+From Lab 4, the use of any generative AI tool (ChatGPT, Copilot, etc.) is **allowed**. But, I still encourage you to write codes by yourself and use AI tools as a way to debug and explore new knowledge. More information about [Academic Integrity](https://www.yuehaoyu.com/data-analytics-visualization/syllabus/#academic-integrity) and [the Use of AI](https://www.yuehaoyu.com/data-analytics-visualization/syllabus/#use-of-ai).
+
+------------------------------------------------------------------------
+
+## Lab 06-A: Dashboard using Tableau
+
+### 📚 TODO: Tableau Dashboard for Project Datasets
+
+**16 points**
+
+The purpose of this lab is to use Excel/R for data preprocessing and Tableau Worksheet + Dashboard to conduct exploratory data analysis and initial visualization on the topic you are interested in. The assignment can be seen as the first step for the [Data Analytics and Visualization Projects](https://www.yuehaoyu.com/data-analytics-visualization/projects/). Note: if you plan to **use Tableau Dashboard for your final project**, you are expected to make significant progress after this lab, both in analytical depth and dashboard design.
+
+#### Requirements
+
+Basic requirements for this lab:
+
+- Create at least five individual visualizations worksheets
+- Create one or two interactive dashboards
+  - Add a title, description, and data source citation
+  - [Format your work](https://help.tableau.com/current/pro/desktop/en-us/formatting.htm) and ensure proper alignment, consistent colors, and readable labels,
+  - Make the dashboard interactive using, for example,  [parameters](https://help.tableau.com/current/pro/desktop/en-us/parameters_create.htm), [filter](https://help.tableau.com/current/pro/desktop/en-us/actions_filter.htm), [highlights](https://help.tableau.com/current/pro/desktop/en-us/actions_highlight.htm), [URL actions](https://help.tableau.com/current/pro/desktop/en-us/actions_url.htm), [set actions](https://help.tableau.com/current/pro/desktop/en-us/actions_sets.htm).
+
+You are encourage to explore some advanced functions in Tableau. [Tableau Desktop and Web Authoring Help](https://help.tableau.com/current/pro/desktop/en-us/default.htm) is always the most helpful material to learn Tableau.
+
+- [Create Parameters](https://help.tableau.com/current/pro/desktop/en-us/parameters_create.htm)
+- [Create Custom Fields with Calculations](https://help.tableau.com/current/pro/desktop/en-us/calculations_calculatedfields.htm)
+- [Create Sets](https://help.tableau.com/current/pro/desktop/en-us/sortgroup_sets_create.htm)
+- [Dashboards](https://help.tableau.com/current/pro/desktop/en-us/dashboards.htm)
+- [Build Advanced Chart Types](https://help.tableau.com/current/pro/desktop/en-us/analytics_howtos.htm)
+
+The results of Tableau visualization should be reflected and briefly discussed in your [project proposal](https://www.yuehaoyu.com/data-analytics-visualization/projects/#project-proposal), providing evidence of your initial data exploration and research direction.
+
+#### Submission
+
+This is a **group assignment** and each group only need to submit once.
+
+Submit your [**Tableau packaged workbook
+(.tbwx)**](https://help.tableau.com/current/pro/desktop/en-us/save_savework_packagedworkbooks.htm)
+This will include any data files that you attach so that when you share
+the file anyone with Tableau can open it!
+
+Or, submit the link to your Tableau Public page via Canvas.
+
+You can also upload to GitHub and submit the link to your repository. Please be sure to make the repository public/visible. For Lab 4-9, the use of any generative AI tool (ChatGPT, Copilot, etc.) is allowed.
+
+#### Late Days
+
+All group members will consume late days if the submission is late.
+
+------------------------------------------------------------------------
+
+## Lab 06-B: Best of Both Worlds --- R + Tableau Together (Optional)
+
+> **This section is optional.** It is a good fit if your project needs a
+> spatial calculation that Tableau can't do on its own (e.g. buffers,
+> spatial joins, areal interpolation). You may do it **as a group**, and
+> you're welcome to use AI tools to help with the R and the Tableau
+> calculated fields. If your project data doesn't need a spatial
+> hand-off, you can skip this section with no penalty.
+
+So far you've used Tableau to *communicate* (Lab 05-A and 06-A) and R to
+*analyze* (Lab 05-B). Professionals rarely pick one; they **let each tool
+do what it is best at**. In this section you'll see two ideas in action:
+
+1.  **Same question, two tools** --- answer *"How many Airbnb listings
+    are within 2,000 ft of a light-rail station?"* in **both** R and
+    Tableau, and compare the experience.
+2.  **The hand-off** --- let R compute something Tableau *can't*, then
+    hand the result to Tableau to make an interactive map.
+
+> **Good news --- the layers are already provided.** Two ready-to-use
+> files ship in this `lab-06` folder:
+>
+> -   `light_rail_stations.geojson` --- the light-rail stations
+> -   `tracts_density.geojson` --- King County census tracts with a
+>     `bus_route_density` column **already computed in R** (route-miles of
+>     bus service per square mile of land)
+>
+> Both are already in longitude/latitude (EPSG:4326), the format Tableau
+> expects, so you can **jump straight to Part 1** and connect them in
+> Tableau --- no R required. The box below shows *how* they were made, in
+> case you want to regenerate them from your own Lab 05-B objects.
+
+<details>
+
+<summary><b>(Optional) Regenerate the layers by sourcing your Lab 5 code</b></summary>
+
+Instead of trusting a file someone handed you, a cleaner habit is to
+**reuse your own Lab 5-B code**. Lab 5-B ends with a named chunk,
+`make-integration-layers`, that builds `lrstations` and `tracts_density`
+from scratch. `knitr::read_chunk()` lets you pull *that one chunk* into
+this lab and run it --- you maintain the logic in **one** place (Lab 5)
+and simply call it here.
+
+> **Why not `knitr::purl()`?** `purl()` would extract *every* R chunk in
+> Lab 5, including Lab 5-A's live Census API call. `read_chunk()` pulls
+> **only the named chunk you ask for** --- exactly what we want.
+
+**Step 1 --- Register the Lab 5 chunk.** Point `read_chunk()` at your Lab
+5 Rmd. `data_dir` tells the sourced code where the Lab 5 **data files**
+(`.gdb`, `.shp`, `.geojson`) live --- this is the trick that makes
+sourcing across two folders work. Adjust the paths to match your machine:
+
+```{r register-lab5, include=FALSE}
+lab5_dir <- "../lab5"                 # <-- folder that holds your Lab 5 files
+data_dir <- lab5_dir                     # the sourced chunk reads its data from here
+# find the Lab 5 Rmd automatically; skip quietly if it is not there
+lab5_rmd <- list.files(lab5_dir, pattern = "\\.Rmd$", full.names = TRUE)
+if (length(lab5_rmd) > 0) knitr::read_chunk(lab5_rmd[1])
+```
+
+**Step 2 --- Run the sourced chunk.** The chunk body below is **empty on
+purpose** --- `read_chunk()` fills it with the code from Lab 5's
+`make-integration-layers` chunk. (It's set to `eval=FALSE` so this lab
+still knits with no R dependencies; flip it to `eval=TRUE`, or just run
+the chunk in RStudio, when you actually want to build the layers.)
+
+```{r make-integration-layers, eval=FALSE, message=FALSE}
+```
+
+After it runs you'll have `lrstations` and `tracts_density` in your
+session --- the very same objects Lab 5 produced.
+
+**Step 3 --- Export to GeoJSON for Tableau.** Tableau maps in
+longitude/latitude (EPSG:4326), so transform *back* to 4326 before
+writing:
+
+```{r eval=FALSE}
+library(sf)
+st_write(st_transform(lrstations, 4326),
+         "light_rail_stations.geojson", delete_dsn = TRUE)
+st_write(st_transform(tracts_density, 4326),
+         "tracts_density.geojson", delete_dsn = TRUE)
+```
+
+> **Why re-project?** R measured distances in *feet* (EPSG:2926).
+> Tableau maps in *degrees* (EPSG:4326) and does its own distance math.
+> Mixing the two up is the #1 spatial hand-off bug --- always know which
+> CRS each tool expects.
+
+</details>
+
+### Part 1 --- The Same Question in Both Tools
+
+You already answered this in R (Lab 05-B, **Task 1**: `st_buffer()` +
+`st_join()`). Now let's do the *same thing* in Tableau and compare.
+
+**Goal:** draw a 2,000-ft ring around each light-rail station and count
+the Airbnb listings that fall inside.
+
+Follow these steps in order (each builds on the one before):
+
+1.  **Connect the first data source.** Open a new Tableau workbook. On the
+    start page, click **Connect ▸ To a File ▸ Spatial file**, and open
+    `light_rail_stations.geojson` (provided in this lab-06 folder).
+2.  **Add the second data source.** On the **Data Source** page (bottom-left
+    tab), find the **Connections** panel in the top-left. Click **Add**,
+    choose **Text file**, and open `airbnb_sea_listings.csv`. You now have
+    two connections in the same workbook.
+3.  **Turn the Airbnb rows into map points.** On the Airbnb table, create a
+    [calculated field](https://help.tableau.com/current/pro/desktop/en-us/calculations_calculatedfields.htm)
+    named `Airbnb Point`:
+
+    ```
+    Airbnb Point = MAKEPOINT([Latitude], [Longitude])
+    ```
+
+    *(Order matters: `MAKEPOINT(latitude, longitude)`.)*
+4.  **Draw the station buffers.** On the stations table, create a
+    calculated field named `Station Buffer`:
+
+    ```
+    Station Buffer = BUFFER([Geometry], 2000, "ft")
+    ```
+
+    *(If `[Geometry]` is not recognized as a point, wrap the coordinates:
+    `BUFFER(MAKEPOINT([Lat], [Long]), 2000, "ft")`.)*
+5.  **Put it on a map.** Go to a new worksheet. Double-click
+    `Station Buffer` to draw the rings on a map. Then drag `Airbnb Point`
+    onto the view --- when Tableau asks, add it as a **second Marks layer**.
+    You can now *visually* see which listings sit inside a ring.
+6.  **Count them with a spatial join.** Go back to the **Data Source** tab.
+    Drag the Airbnb table next to the stations table and choose a
+    **Relationship**. Set the join operator to **Intersects** so it reads:
+    `Airbnb Point` **Intersects** `Station Buffer`. Don't know how to do it? 
+    Watch [this video](https://youtu.be/MXquD73rnic?t=125)
+7.  **Build the ranking.** Back on a worksheet, drag **Station Name** to
+    **Rows** and `CNT(Airbnb id)` to **Columns**, then **sort descending**.
+    This is the same top-stations ranking you produced in R.
+8.  **Finish the sheet.** Rename it *Airbnb near Light Rail*, add **mark
+    labels**, and drop it onto a dashboard.
+
+#### Compare the Two Tools
+
+| | **R (`sf`)** | **Tableau** |
+|-----------------|--------------------------|----------------------------|
+| How you buffer | `st_buffer(dist = 2000)` | `BUFFER(…, 2000, "ft")` |
+| How you join | `st_join(join = st_within)` | Relationship ▸ *Intersects* |
+| Strengths | reproducible, scriptable, exact | instant map, interactive, no code |
+| Pain points | must manage CRS + run code | spatial joins are fiddly; hard to chain steps |
+
+> **The lesson:** for a *one-off, interactive look*, Tableau is faster.
+> For anything you must **repeat, document, or chain** (buffer → join →
+> summarize → model), R wins. Same answer, different ergonomics.
+
+### Part 2 --- The Hand-off: Let R Do What Tableau Can't
+
+Some analysis is genuinely hard or impossible in Tableau --- for example
+the **areal interpolation** in Lab 05-B Task 3 (estimating downtown
+population by area-weighting overlapping tracts), or the **bus density per
+tract** in Lab 05-B Task 2. The professional pattern is:
+
+> **R computes the hard layer → `st_write()` to GeoJSON → Tableau maps it
+> interactively.**
+
+The `tracts_density.geojson` file is provided in this folder. Now visualize
+that R-computed layer in Tableau:
+
+1.  **Connect** ▸ *Spatial file* → `tracts_density.geojson`.
+2.  Double-click the **Geometry** field --- Tableau draws the tract
+    polygons automatically.
+3.  Drag `bus_route_density` → **Color**; pick a sequential, colour-blind-safe
+    palette (e.g. *Viridis* or Blue-Green).
+4.  Add a **filter** on an affordability field and set it to **affect all
+    worksheets**, so the dashboard stays interactive.
+5.  Add a title, a one-line method note ("*density computed in R via
+    `st_intersection()` + `st_length()`*"), and the data source.
+
+Tableau never had to do the spatial math --- it just painted the answer R
+produced.
+
+> **Optional --- interactivity *inside* R.** If you'd rather stay in R,
+> `leaflet` (+ `crosstalk`) or `ggiraph` give you hover/zoom/filter maps
+> without Tableau, e.g.
+> `leaflet(st_transform(tracts_density, 4326)) |> addPolygons()`. Good to
+> know the whole spectrum --- but for a polished, shareable dashboard the
+> R → Tableau hand-off is usually the smoother path.
+
+### 📚 TODO: Use R and Tableau Collectively (Optional --- Bonus)
+
+**Optional. Up to 4 bonus points.** You may submit this as a group.
+
+1.  **Do the hand-off.** Using the `tracts_density.geojson` you exported,
+    build **one Tableau worksheet** that maps an R-computed value
+    (`bus_route_density`, or a layer you derived yourself) and add it to your
+    dashboard.
+2.  **The bake-off reflection (3--4 sentences).** For *your* final
+    project, which steps would you do in **R** and which in **Tableau**,
+    and why? Name at least one task each tool is clearly better for.
+    
+    For our project, we would do data preparation and modeling in R as the coding process would be clear and reproducible. For communication and vivusalizaiton, we would do it in tableau as it is visually more comprehensivable and easier to adjust. The rough steps would be: exporting the finished ZCTA layer from R as GeoJSON, then visualize it in R. 
+
+------------------------------------------------------------------------
+
+## Lab 06-C: Relational Database and SQL (Optional --- Bonus)
+
+> **This section is optional and worth up to 4 bonus points.** The goal is
+> simply to let you know what a database and SQL are, and why we use such
+> tools. SQL is a gentler learning curve than R and very transferable ---
+> worth a look even if you only skim it.
+>
+> **To earn the bonus:** read through the SQL below, then write **two
+> queries of your own** (e.g. a `WHERE` filter or `GROUP BY` aggregation
+> on `airbnb.sqlite`, or a **window-function moving average** on the
+> monthly time-series table), show the results, and add a one-sentence
+> note on what each query tells you. You may use AI tools to help draft
+> the SQL.
+
+For handling small datasets, like all the datasets we have used so far, storing them in simple `.csv` files works perfectly fine. However, when we start dealing with larger datasets, or data that need to be shared, updated, or queried efficiently, it becomes difficult to manage everything as separate files — imagine the disaster of running DXD Capital’s data system with thousands of `CSVs`.
+
+So, people are using **Database Management System (DBMS)** to create and manage a large amount of data. For commonly used row/column data, **relational databases** are the most widely used type of database. It organizes data into tables, where each table contains rows and columns. Different tables can be linked together through **keys**.
+
+- Primary Key [PK]: unique attributes.
+- Foreign Key [FK]: attributes that can be used to uniquely identify a row in **another table**.
+
+Relationships are connections among two or more entity sets.
+
+- one-to-one: SSN - a person who has SSN
+- many-to-one: SSN - phone numbers
+- many-to-many: stores - products
+
+![Entity/Relationship Diagrams for a Relational Database. Source: Josh Errickson, Statistics, University of Michigan](https://dept.stat.lsa.umich.edu/~jerrick/courses/stat506_f23/images/rdbms.png)
+
+#### A Quick Look of SQL
+
+[SQL (Structured Query Language)](https://en.wikipedia.org/wiki/SQL) is the most commonly used query language for relational databases. Let's try to use `SQL` to get query for Airbnb data within `airbnb.sqlite`, a [SQLite database](https://sqlite.org).
+
+```{r}
+# install.packages("DBI") # you only need to install once
+# install.packages("RSQLite") # you only need to install once
+library(DBI)
+# connect to the airbnb database
+airbnb_db <- dbConnect(RSQLite::SQLite(), "airbnb.sqlite")
+```
+
+```{r}
+# check the tables and fields (not important points for SQL)
+dbListTables(airbnb_db)
+dbListFields(airbnb_db, "airbnb")
+```
+
+We use queries to get the data we want from a database. A query is simply a command written in SQL that asks the database to return specific information.
+
+| **SQL Command** | **Purpose**                           | **Example**                                                |
+| --------------- | ------------------------------------- | ---------------------------------------------------------- |
+| **SELECT**      | Retrieve data from one or more tables | SELECT * FROM my_table;                                    |
+| **WHERE**       | Filter rows based on a condition      | SELECT * FROM my_table WHERE population > 100000;          |
+| **ORDER BY**    | Sort results                          | SELECT * FROM my_table ORDER BY income DESC;               |
+| **LIMIT**       | Restrict the number of returned rows  | SELECT * FROM my_table LIMIT 10;                           |
+| **GROUP BY**    | Aggregate rows by a category          | SELECT state, AVG(income) FROM my_table GROUP BY state;    |
+| **JOIN**        | Combine data from multiple tables     | SELECT * FROM city JOIN state ON city.state_id = state.id; |
+
+
+```{r}
+# query within "*"
+# select all columns from airbnb data limit to 3 rows
+dbGetQuery(airbnb_db, "SELECT *
+                       FROM airbnb
+                       LIMIT 3")
+```
+
+```{r}
+# select distinct neighbourhood_group column from airbnb data limit to 3 rows
+dbGetQuery(airbnb_db, "SELECT DISTINCT neighbourhood_group
+                       FROM airbnb
+                       LIMIT 3")
+```
+
+```{r}
+# select all columns from airbnb data and order by price limit to 3 rows
+dbGetQuery(airbnb_db, "SELECT *
+                       FROM airbnb
+                       ORDER BY price DESC
+                       LIMIT 3")
+```
+
+```{r}
+# the average price by neighborhood group and avg price above 250
+dbGetQuery(airbnb_db, "SELECT neighbourhood_group, AVG(price) AS Avg_price
+                       FROM airbnb
+                       GROUP BY neighbourhood_group
+                       HAVING Avg_price > 250")
+```
+
+```{r}
+# disconnect from the database
+dbDisconnect(airbnb_db)
+```
+
+SQL is not a complicated language. But similarly to shell, I will recommend to use AI to prepare the queries unless you have a full-time job in data science. Some resources for learning SQL:
+
+- [SQLBolt](https://sqlbolt.com)
+- [CSE 414 Introduction to Database Systems (for non-CSE Majors)](https://courses.cs.washington.edu/courses/cse414/)
+- [Databases and SQL Software Carpentry](https://swcarpentry.github.io/sql-novice-survey/).
+
+**Query 1: Listings, price, and availiability by room type**
+
+```{r}
+airbnb_db <- dbConnect(RSQLite::SQLite(), "airbnb.sqlite")
+
+dbGetQuery(airbnb_db, "SELECT room_type,
+                              COUNT(*) AS n_listings,
+                              ROUND(AVG(price), 1) AS avg_price,
+                              ROUND(AVG(availability_365), 0) AS avg_days_available
+                       FROM airbnb
+                       WHERE price IS NOT NULL
+                         AND price <= 1000
+                       GROUP BY room_type
+                       ORDER BY avg_price DESC")
+```
+
+This query shows the structure of Seattle's Airbnb supply: which type is the most popular and their prices.
+
+**Query 2: Hosts with the most listings.**
+
+```{r}
+dbGetQuery(airbnb_db, "SELECT host_id, host_name, COUNT(*) AS n_listings, ROUND(AVG(CASE WHEN price <= 1000 THEN price END), 1) AS avg_price FROM airbnb Group BY host_id, host_name HAVING COUNT(*) >= 20 ORDER BY n_listings DESC LIMIT 10")
+
+dbDisconnect(airbnb_db)
+```
+
+This query shows market concentration and major suppliers. It is also an indicator of draining supply from long term rental market as well as competition of the hotel/hospitality market. 
+
+#### Window Functions and Moving Averages
+
+The `airbnb` table above is a **snapshot** --- one row per listing, with no
+repeated measurements over time --- so a *moving average over time* has
+nothing to slide along. Moving averages need **time-series data**: the
+same quantity measured repeatedly at regular time steps.
+
+So let's build a tiny time series and query it. Here we create a small
+table of **average Seattle Airbnb nightly price by month** and load it
+into SQLite through the same kind of connection. (In a real project this
+table might come from a data vendor, a scraper, or a `GROUP BY` on dated
+records.)
+
+```{r}
+library(DBI)
+# a fresh in-memory SQLite database (nothing is written to disk)
+ts_db <- dbConnect(RSQLite::SQLite(), ":memory:")
+
+monthly_price <- data.frame(
+  month     = sprintf("2024-%02d", 1:12),
+  avg_price = c(168, 171, 177, 185, 196, 214,
+                241, 238, 210, 190, 179, 183)
+)
+# write the data frame into the database as a table called "monthly_price"
+dbWriteTable(ts_db, "monthly_price", monthly_price, overwrite = TRUE)
+```
+
+A **window function** runs a calculation across a set of rows related to
+the current row --- *without collapsing* them the way `GROUP BY` does.
+The `OVER (...)` clause defines the "window" of rows. For a **3-month
+moving average** we order by month and average the current row together
+with the two before it:
+
+```{r}
+dbGetQuery(ts_db, "
+  SELECT month,
+         avg_price,
+         ROUND(AVG(avg_price) OVER (
+           ORDER BY month
+           ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+         ), 1) AS moving_avg_3mo
+  FROM monthly_price
+  ORDER BY month")
+```
+
+The `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW` frame is what makes it
+"moving" --- each row looks back two steps. Widen it (e.g. `5 PRECEDING`)
+for a smoother 6-month average.
+
+Another common window function is `LAG()`, which grabs a value from an
+earlier row --- handy for a month-over-month change:
+
+```{r}
+dbGetQuery(ts_db, "
+  SELECT month,
+         avg_price,
+         avg_price - LAG(avg_price) OVER (ORDER BY month) AS change_vs_prev
+  FROM monthly_price
+  ORDER BY month")
+
+dbDisconnect(ts_db)
+```
+
+
+
+> **Note:** window functions require SQLite 3.25+ (released 2018). The
+> `RSQLite` package bundles a modern SQLite, so this works out of the box.
+
+### Code Style
+
+It is important to write efficiently that can be read by computers and **people**. In the community of `R`, we use to follow the [Tidyverse Style Guide](https://style.tidyverse.org).
+
+## Acknowledgement
+
+The materials are developed by [Haoyu Yue](www.yuehaoyu.com) based
+materials from [Dr. Feiyang Sun at UC San Diego](https://fsun.ucsd.edu),
+Siman Ning and Christian Phillips at University of Washington, [Dr.
+Charles Lanfear at University of Cambridge](https://clanfear.github.io).
