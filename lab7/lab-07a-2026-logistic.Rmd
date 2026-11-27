@@ -1,0 +1,1937 @@
+---
+title: "Lab 07-A Regression in Statistics"
+subtitle: "RE 519 Data Analytics and Visualization | Autumn 2026"
+author: "" #remember to add to your name when you submit the lab
+date: ""
+output:
+  cleanrmd::html_document_clean:
+    theme: almond
+    toc: true
+    toc_depth: 3
+    css: custom.css
+    mathjax: "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+    md_extensions: +tex_math_dollars+tex_math_single_backslash
+    df_print: paged
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+------------------------------------------------------------------------
+
+<!-- start of the main lab content -->
+
+In Lab 7, we will go back to the **King County sales** data from
+maintained by [Andy Krause](https://www.andykrause.com/index.html) at
+Zillow. You can find the datasets and Readme file in [this
+repository](https://github.com/andykrause/kingCoData).
+
+Lab 7 comes in **two parts, released separately**. This is **Part A**,
+where we use classical regression, which considers more on the model
+specification, assumptions, and parameter interpretation. We cover two
+models: **linear regression** for a continuous outcome (King County sale
+prices) and **logistic regression** for a binary outcome (mortgage
+denial in the Boston HMDA data). **Part B**
+(released after the machine learning lecture) still uses regression but
+under the context of machine learning, where we care about the
+prediction accuracy on unseen test dataset. A seminal paper discusses
+the **two cultures in statistical modeling**: [Statistical Modeling: The
+Two Cultures. Leo Breiman.
+2001.](https://projecteuclid.org/journals/statistical-science/volume-16/issue-3/Statistical-Modeling--The-Two-Cultures-with-comments-and-a/10.1214/ss/1009213726.full)
+
+From Lab 4, the use of any generative AI tool (ChatGPT, Copilot, etc.)
+is **allowed** for coding assignments. But, I still encourage you to
+write codes by yourself and use AI tools as a way to debug and explore
+new knowledge. More information about [Academic
+Integrity](https://www.yuehaoyu.com/data-analytics-visualization/syllabus/#academic-integrity)
+and [the Use of
+AI](https://www.yuehaoyu.com/data-analytics-visualization/syllabus/#use-of-ai).
+
+------------------------------------------------------------------------
+
+# Lab 07 Regression in Statistics
+
+```{r message=FALSE}
+# --- install packages (run once, then keep these lines commented out) ---
+#install.packages("modelsummary") # formats regression tables
+#install.packages("devtools")     # lets us install packages from GitHub (needed on Windows)
+#devtools::install_github('andykrause/kingCoData') # the King County sales data package
+
+# --- load packages (run every time you open R) ---
+library('tidyverse')   # data wrangling (dplyr, tidyr) and plotting (ggplot2)
+library(modelsummary)  # side by side regression result tables
+library('kingCoData')  # King County home sales data
+```
+
+```{r}
+
+data(kingco_sales) # load the sale data
+# only select the sales in 2023
+sales <- kingco_sales %>% 
+  filter(sale_date >= as.Date("2023-01-01") & sale_date <= as.Date("2023-12-31"))
+```
+
+## A Simple Linear Regression
+
+#### Checking Correlation
+
+Correlation ($r$) measures the strength and direction of a linear
+relationship between two variables. The most common one for continuous
+numeric data is [**Pearson
+correlation**](https://en.wikipedia.org/wiki/Pearson_correlation_coefficient),
+which ranges from -1 to 1.
+
+-   +1 Perfect positive correlation
+-   0 No linear relationship
+-   –1 Perfect negative correlation
+
+Note: Correlation is a useful starting point for selecting variables. We
+often use $|r| > 0.3$ as a rough criterion for inclusion. But we still
+need to incorporate domain knowledge and some diagnostic testing. For
+example, correlation between sale price and year built is only \~0.1,
+which suggests a weak linear relationship, but it may still be
+theoretically relevant.
+
+```{r}
+# Pearson correlation matrix for four numeric variables
+# each cell is the correlation (r) between the row and the column variable
+cor(sales[, c("sale_price", "sqft", "year_built", "condition")])
+```
+
+#### Scatterplots
+
+```{r}
+# reshape from wide to long: one row per (house, variable) pair
+# this lets us draw both scatterplots with one ggplot call using facets
+sales_long <- sales |>
+  pivot_longer(
+    cols = c(sqft, year_built), # the two X variables we want to plot
+    names_to = "variable",      # new column holding the variable name
+    values_to = "xvalue"        # new column holding the X value
+  )
+
+ggplot(sales_long, aes(x = xvalue, y = sale_price)) +
+  geom_point(size = 0.3, alpha = 0.5, color = "#e8e3d3") +   # one point per sale
+  geom_smooth(linewidth = 0.5, method = "lm", formula = "y~x",
+              color = "#4b2e83") +                          # straight OLS line
+  facet_wrap(~ variable, scales = "free_x") +  # one panel per X, each with its own x axis
+  labs(
+    x = "Explanatory Variable",
+    y = "Sale Price ($)",
+    title = "Sale Price vs. Square Footage of House (Sqft) and Year Built"
+  ) +
+  theme_minimal()
+```
+
+**Reading the plot**: in the `sqft` panel, price rises with house size
+and the purple line slopes clearly upward. The cloud also **fans out**:
+small houses sell in a narrow price range, while large houses spread from
+about \$1 million to over \$10 million. That is an early sign of
+unequal variance. In the `year_built` panel, the line is almost flat, so
+age alone has a weak linear link with price (this matches $r \approx 0.1$).
+In both panels, a handful of sales sit far above the rest (\$10 to
+\$16.5 million). Keep them in mind; we will meet them again as outliers.
+
+#### Fitting the Model
+
+Starting to fit a regression, you define a family of models that express
+a precise, but generic, pattern that you want to capture. For example,
+the pattern might be a straight line, or a quadratic curve. You will
+express the model family as an equation like $y = \beta_0 + \beta_1 x$
+or $y = \beta_0 + \beta_1 x^2$. Here, $x$ and $y$ are known variables
+from your data, and $\beta_0$ and $\beta_1$ are parameters that can vary
+to capture different patterns.
+
+```{r}
+# lm() fits a linear model by ordinary least squares (OLS)
+# formula: Y ~ X1 + X2; R adds the intercept for us
+simple_lm <- lm(data = sales, sale_price ~ sqft + year_built)
+```
+
+We can check the results using `summary()` (result table) and
+`confint()` (confidence intervals).
+
+```{r}
+summary(simple_lm) # coefficients, standard errors, t values, p values, R-squared
+confint(simple_lm) # 95% confidence interval for each coefficient
+```
+
+How to read the tables?
+
+![Results from R and Interpretations](assets/summary_table.png)
+
+<details>
+
+<summary><b>Click to view additional notes on reading the
+results</b></summary>
+
+**Hypothesis**: The model test if $Y$ is associated with $X$. The null
+hypothesis $H_0$ is that there is no linear relationship between the
+response variable and the explanatory variable(s), and the alternative
+hypothesis $H_1$ is that there is relationship.
+
+**Estimate and standard error**:In the model, estimate is the estimation
+of coefficient $\beta$, std.error is the standard error for estimation.
+The standard error of the coefficient is an estimate of the standard
+deviation of the coefficient $\beta$. In effect, it is telling us how
+much uncertainty there is with our coefficient. The standard error is
+often used to create confidence intervals.
+
+**t-statistic**: The t-statistic is simply the coefficient divided by
+the standard error. In general, we want our coefficients to have large
+t-statistics, because it indicates that our standard error is small in
+comparison to our coefficient. Simply put, we are saying that the
+coefficient is $t$ standard errors away from zero.
+
+**p-value**: If you see the variable has p value $\leq 0.05$, or you can
+also see the star next to $Pr(>|t|))$, we can say we reject the null
+hypothesis. In practice, any p-value below 0.05 is usually deemed as
+significant. What do we mean when we say significant? It means we are
+confident that the coefficient is not zero, meaning the coefficient does
+in fact add value to the model by helping to explain the variance within
+our dependent variable. **Note:** reading the stars this way only works
+for individual variables and not categorical variables.
+
+**R-squared**: R-squared explains how much variation of y can be
+explained by the model. This is helpful for univariate regression, but
+starts to become fairly unhelpful for multivariate regression. We would
+look at adjusted R-squared, which penalizes complexity.
+
+</details>
+
+### Check Assumptions
+
+For a normal linear model to be a good model, there are some
+conditions/assumptions that need to be fulfilled. The six below match
+the "OLS Assumptions in Plain Words" table from lecture:
+
+1.  **Linearity**: average $Y$ changes along a straight line in $X$. $Y$
+    can be described by a linear combination of $X$ (or transformations
+    of $X$). You may log or square $X$, but not $\beta$.
+2.  **Random sample, independent errors**: each home is a fresh draw;
+    one sale's error tells us nothing about a neighbor's. We are using
+    time series and spatial data, so we are likely to violate this
+    assumption.
+3.  **No perfect multicollinearity among X**: no $X$ is an exact copy or
+    sum of other $X$s. Example: using all three scores as $X$ if total
+    score = part A score + part B score.
+4.  **Zero conditional mean** $E[\varepsilon \mid X] = 0$: nothing left
+    in the error moves with $X$; no important variable is left out. If
+    it fails, we get omitted-variable bias and the slope is wrong.
+5.  **Equal variance (homoscedasticity)** $Var(\varepsilon \mid X) =
+    \sigma^2$: errors spread the same way for cheap and expensive homes.
+6.  **Normal errors** $\varepsilon \sim N(0, \sigma^2)$: errors follow a
+    bell curve.
+
+How much each assumption buys you:
+
+-   **Assumptions 1–4** give *unbiased slopes* — right on average.
+-   **+ Assumption 5** makes OLS **BLUE** — the most precise linear
+    unbiased estimator (Gauss–Markov).
+-   **+ Assumption 6** makes *p-values exact* even in a small sample,
+    not just approximately.
+
+If these assumptions are not met, the inference with the computed
+standard error is invalid. That is, if the assumptions are not met, the
+standard error should not be trusted, or should be computed using
+alternative methods.
+
+The quickest way to check many assumptions is to use `plot(model)` and
+it will generated several key plots for us. We use `which` to specify
+the plot but in practice, you can generate them at the same time.
+
+We will setup a 'perfect' model as the example to compare:
+
+```{r}
+set.seed(519) # fix the random numbers so everyone gets the same "perfect" model
+
+# simulate data that meets every OLS assumption:
+# a true straight line (3 + 2x) plus normal noise with constant spread
+example_x <- seq(1, 100, by = 1)
+example_y <- 3 + 2 * example_x + rnorm(100, mean = 0, sd = 2)
+example_model <- lm(example_y ~ example_x)
+```
+
+#### Residuals vs Fitted
+
+```{r fig.width=10, fig.height=4.5}
+par(mfrow = c(1, 2))  # put the next two plots side by side (1 row, 2 columns)
+
+# which = 1 asks plot() for the Residuals vs Fitted panel only
+plot(example_model, which = 1, main = "Perfect Model")
+plot(simple_lm, which = 1, main = "Our Linear Model")
+
+par(mfrow = c(1, 1))  # reset to one plot per figure
+```
+
+**Horizontal Axis**: Fitted values (predicted values) from the
+regression model.
+
+**Vertical Axis**: Residuals (the differences between the observed
+values and the predicted values).
+
+**Interpretation**: This plot helps you check for linearity and
+homoscedasticity (equal variance of error terms). Ideally, you should
+see a horizontal red line (for linearity) and random scatter of points
+with no discernible pattern (for homoscedasticity). If there’s a pattern
+(e.g., a curve or fan shape), it suggests non-linearity or
+heteroscedasticity, which might indicate a problem with the model.
+
+**In the perfect model**: points form an even band around 0 with no
+shape, and the red line stays flat. This is what "good" looks like.
+
+**In our case**: the red line stays close to 0 but bends a little (slightly
+below 0 in the middle, rising above 0 at the highest fitted values), so
+there is mild nonlinearity. The bigger problem is the **fan shape**: the
+spread of residuals grows as fitted values grow, which breaks equal
+variance (Assumption 5). The residuals are also lopsided. Positive
+residuals reach about \$14 million (sales 460, 565 and 11401), while
+negative residuals rarely go below \$-2 million. In other words, the model
+badly underpredicts a few very expensive homes. Price data are often
+right skewed (long upper tail), and a log transformation of $Y$ is a
+common fix.
+
+> **What this plot CANNOT tell you — Assumption 4 (zero conditional
+> mean).** A flat red line here does **not** prove $E[\varepsilon \mid
+> X] = 0$. By construction, OLS forces the residuals to average zero and
+> to be uncorrelated with the included $X$s — so the residual plot will
+> look "fine" even when an important variable has been left out. Zero
+> conditional mean is about **research design and theory** (did we
+> include the right controls, is $X$ exogenous?), not something a
+> diagnostic plot can confirm. Omitted-variable bias cannot be detected
+> by staring at residuals, and "more data never fixes it."
+
+#### Q–Q Plot
+
+[Q-Q
+plots](https://library.virginia.edu/data/articles/understanding-q-q-plots)
+helps us to compare a set of data with normal distribution. If the data
+is perfectly normally distributed, it should follow the dash line.
+
+-   S-shaped curve: heavier tails or more peaked than the normal
+    distribution (for example, a t-distribution).
+-   Curved upward or downward: skewness (the data are not symmetric).
+-   Clearly deviating from the straight line: Suggests the data are not
+    normally distributed.
+
+```{r fig.width=10, fig.height=4.5}
+par(mfrow = c(1, 2))  # two plots side by side
+
+# which = 2 gives the normal Q-Q plot of standardized residuals
+plot(example_model, which = 2, main = "Perfect Model")
+plot(simple_lm, which = 2, main = "Our Linear Model")
+
+par(mfrow = c(1, 1))  # reset the layout
+```
+
+**In the perfect model**: points follow the dashed line closely, with only
+small wiggles at the ends. That is normal sampling noise.
+
+**In our case**: the left half of the points sits close to the line, but
+from about 1.5 theoretical quantiles the points **curve sharply upward**,
+reaching standardized residuals above 20 (sales 460, 11401 and 565). A
+normal distribution would almost never produce a value beyond 4. This
+one sided upward curve means the residuals are **right skewed**: a long
+upper tail of homes that sold for far more than the model predicts.
+Assumption 6 (normal errors) fails. With over 15,000 sales, p values are
+still roughly correct because of the central limit theorem, but the
+extreme tail is a warning about outliers.
+
+#### Residuals vs Leverage
+
+```{r fig.width=10, fig.height=4.5}
+par(mfrow = c(1, 2))  # two plots side by side
+
+# which = 5 gives Residuals vs Leverage with Cook's distance contours
+plot(example_model, which = 5, main = "Perfect Model")
+plot(simple_lm, which = 5, main = "Our Linear Model")
+
+par(mfrow = c(1, 1))  # reset the layout
+```
+
+**Horizontal Axis**: Leverage (hat values). Leverage measures how
+**unusual an observation's $X$ values are**, for example a very large or
+very old house. High leverage means a point *could* pull the line, but it
+does not mean it *does*.
+
+**Vertical Axis**: Standardized residuals (residuals divided by their
+standard deviation).
+
+**Interpretation**: This plot puts two ideas together. Points far
+above or below 0 are **outliers** (unusual $Y$ given $X$). Points far to
+the right have **high leverage** (unusual $X$). A point is
+**influential** when it is both, which means removing it would move the
+regression line noticeably. The gray dashed curves are **Cook's distance**
+contours at 0.5 and 1. Points beyond those curves (top right or bottom
+right corners) are the ones to worry about. If no curve shows up in the
+plot, every point is far inside them.
+
+**In the perfect model**: residuals stay between about -2 and 2, and
+leverage is small and similar for everyone (equally spaced $X$). No Cook's
+contour is visible.
+
+**In our case**: most sales sit near zero leverage, as expected with
+15,409 observations. Sale **460** has a huge residual (about 21) but low
+leverage, so it is an outlier with limited influence. Sale **11401** has
+both a large residual (about 19) and higher leverage (a 9,110 sqft house),
+so it sits close to the Cook's distance = 0.5 contour (its Cook's D is
+0.46). Sale **13510** is similar but smaller. Nothing crosses 0.5, so no
+single sale is strongly changing the line. But are these sales errors,
+and should we remove them? The next section shows how to decide.
+
+#### Outliers, Leverage and Influence: Should We Remove Them?
+
+It is tempting to delete any point that looks unusual. That is usually a
+**bad idea**. A careful decision has two parts: **metrics** to flag rows,
+and **judgment** to decide what to do with them.
+
+**Step 1. Flag with metrics.** Each metric answers a different question
+($n$ = number of observations, $k$ = number of coefficients including
+the intercept):
+
+| Metric | R function | Question it answers | Common cutoff |
+|---|---|---|---|
+| Studentized residual | `rstudent()` | Is $Y$ unusual given $X$? (outlier) | $\lvert r \rvert > 3$ |
+| Leverage (hat value) | `hatvalues()` | Are the $X$ values unusual? | $> 2k/n$ or $3k/n$ |
+| Cook's distance | `cooks.distance()` | How much do **all** coefficients change if this row is dropped? | $> 4/n$: look; $> 0.5$: investigate; $> 1$: highly influential |
+| DFBETAS | `dfbetas()` | How much does **one** coefficient change if this row is dropped? | $\lvert \text{DFBETAS} \rvert > 2/\sqrt{n}$ |
+| Bonferroni outlier test | `car::outlierTest()` | Is the largest residual too big to be chance, after adjusting for many tests? | Bonferroni $p < 0.05$ |
+
+```{r}
+n <- nobs(simple_lm)          # number of observations used in the model
+k <- length(coef(simple_lm))  # number of coefficients, including the intercept
+
+# one row per sale with the three main influence measures
+influence_lm <- data.frame(
+  row      = 1:n,
+  rstudent = rstudent(simple_lm),       # studentized residual
+  leverage = hatvalues(simple_lm),      # hat value
+  cooks_d  = cooks.distance(simple_lm)  # Cook's distance
+)
+
+# how many sales does each rule flag?
+c(outlier_r3      = sum(abs(influence_lm$rstudent) > 3),
+  leverage_3k_n   = sum(influence_lm$leverage > 3 * k / n),
+  cooks_4_n       = sum(influence_lm$cooks_d > 4 / n),
+  cooks_0.5       = sum(influence_lm$cooks_d > 0.5),
+  dfbeta_sqft     = sum(abs(dfbetas(simple_lm)[, "sqft"]) > 2 / sqrt(n)))
+```
+
+With $n = 15{,}409$, the "$4/n$" cutoff is only 0.00026, so it flags 678
+sales. The loose rules flag hundreds of rows in a large dataset. They
+tell us **where to look**, not what to delete. Only the $0.5$ rule is
+strict, and it flags none.
+
+**Step 2. Look at the flagged rows.** Is it a data error, or a real sale
+that the model cannot explain?
+
+```{r}
+# the five most influential sales, with a few columns that describe them
+top5 <- order(influence_lm$cooks_d, decreasing = TRUE)[1:5]
+cbind(influence_lm[top5, c("rstudent", "cooks_d")],
+      sales[top5, c("sale_price", "sqft", "year_built", "city", "wfnt", "sale_warning")])
+```
+
+These are **real luxury sales**, not typos. Sales 11401 and 13510 are new
+mansions in Medina (over 7,000 sqft, built in 2021). Sales 460, 1087
+and 9752 are on the Lake Washington waterfront (`wfnt = 6` is the King County
+code for Lake Washington). None has an assessor sale
+warning (`sale_warning` is blank). They look like outliers because our
+model only knows size and age. It does not know about **waterfront,
+location or lot size**, which explain most of these prices.
+
+**Step 3. Sensitivity analysis.** Refit the model without the flagged rows
+and see whether the conclusion changes.
+
+```{r}
+# refit without the 3 sales with the largest Cook's distance
+top3 <- order(influence_lm$cooks_d, decreasing = TRUE)[1:3]
+lm_drop3 <- update(simple_lm, data = sales[-top3, ])
+
+# refit without every sale above the 4/n cutoff (the "mechanical" approach)
+lm_drop4n <- update(simple_lm, data = sales[influence_lm$cooks_d <= 4 / n, ])
+
+# compare coefficients, R-squared and sample size side by side
+data.frame(
+  model = c("All sales", "Drop top 3", "Drop Cook's D > 4/n"),
+  sqft = c(coef(simple_lm)["sqft"], coef(lm_drop3)["sqft"], coef(lm_drop4n)["sqft"]),
+  year_built = c(coef(simple_lm)["year_built"], coef(lm_drop3)["year_built"],
+                 coef(lm_drop4n)["year_built"]),
+  r_squared = c(summary(simple_lm)$r.squared, summary(lm_drop3)$r.squared,
+                summary(lm_drop4n)$r.squared),
+  n = c(nobs(simple_lm), nobs(lm_drop3), nobs(lm_drop4n))
+)
+
+# median price of the sales the 4/n rule would delete, vs all sales
+median(sales$sale_price[influence_lm$cooks_d > 4 / n])
+median(sales$sale_price)
+```
+
+Dropping the top three changes the `sqft` slope only a little (about
+\$501 to \$488 per sqft). Dropping all 678 rows above $4/n$ raises
+R-squared from 0.32 to 0.49, which *looks* like a better model. But the
+deleted sales have a median price of about \$3.1 million, versus
+\$895,000 overall. We did not improve the model; we **removed the
+expensive part of the market** and changed the population we describe.
+
+**Step 4. Decide and report.**
+
+-   **Remove** a row only if it is a **data error** (impossible values,
+    duplicate records, a sale price of \$1) or it is **outside the
+    population** you want to study (for example, a sale between family
+    members, which is not an arm's length market sale).
+-   **Keep** a real observation that the model cannot explain. Fix the
+    **model** instead: transform $Y$ (log), add missing variables, or
+    use a method that is less sensitive to extreme values (robust
+    regression).
+-   **Report** what you did. If you remove rows, say how many, why, and
+    show that the key results do not depend on the choice.
+
+**Our decision**: keep these sales. They are real, they pass the strict
+Cook's $D < 0.5$ rule, and the sensitivity check shows the slope barely
+moves. Their large residuals point to a missing variable problem and a
+skewed $Y$, which we address next with a log transformation.
+
+#### Multicollinearity
+
+The Variance Inflation Factor (VIF) measures how much the variance of a
+regression coefficient is inflated due to collinearity with other
+predictors. If there is perfect multicollinearity, R will automatically
+drop one of the variables. If there is imperfect multicollinearity. R
+won’t drop and the model estimates will be biased.
+
+-   VIF = 1: no correlation with other predictors.
+-   VIF \> 5: moderate multicollinearity concern, potential for removal.
+-   VIF \> 10: serious multicollinearity, must remove the variable
+
+```{r message=FALSE}
+#install.packages('car') # run once
+library(car)  # Companion to Applied Regression: diagnostics such as vif()
+
+# variance inflation factor for each X in the model
+vif(simple_lm)
+```
+
+#### Independence of Errors
+
+Assumption 2 says the residuals should be independent of each other.
+With housing sales this is often violated in two ways: sales close in
+**time** can share market shocks, and sales close in **space** (same
+block or neighborhood) tend to have similar unobserved quality. When
+errors are correlated, the standard errors can be *half their true
+size*, so noise looks significant.
+
+A quick **temporal** check is the Durbin–Watson test (also in the `car`
+package). The statistic ranges from 0 to 4; a value near **2** means no
+autocorrelation, below 2 suggests positive autocorrelation, and a small
+p-value flags a problem.
+
+```{r message=FALSE}
+# Durbin-Watson version (can be slow on large data, so we leave it commented out)
+# order the data by sale_date first so "neighboring" rows are adjacent in time
+installed.packages("car")
+library(car)
+durbinWatsonTest(lm(sale_price ~ sqft + year_built,
+                     data = sales[order(sales$sale_date), ]))
+
+library(lmtest)  # tests for linear models, including bgtest()
+
+# refit the same model on data sorted by sale date,
+# so "next row" means "next sale in time"
+model <- lm(sale_price ~ sqft + year_built, data = sales[order(sales$sale_date), ])
+
+# Breusch-Godfrey test for serial correlation (handles large data well)
+# H0: no autocorrelation; order = 1 checks each residual against the previous one
+bgtest(model, order = 1)
+
+# the same idea by hand: correlation between each residual and the next one
+res <- residuals(model)
+cor(res[-length(res)], res[-1]) # drop last / drop first so the two vectors line up
+```
+
+**In our case**: the Breusch–Godfrey test has a p value below 2.2e-16,
+and the correlation between each residual and the next one (in time
+order) is about 0.18. Sales close in time do share some of their errors.
+
+#### Spatial Autocorrelation: Moran's I
+
+For **spatial** dependence, the standard tool is **Moran's I** computed
+on the model residuals. It asks: *are the residuals of nearby homes more
+similar than we would expect by chance?*
+
+-   $I \approx 0$ (more precisely, close to $-1/(n-1)$): no spatial
+    pattern.
+-   $I > 0$: nearby homes have similar residuals (positive spatial
+    autocorrelation). This is the common case for housing.
+-   $I < 0$: nearby homes have opposite residuals (rare in practice).
+
+Moran's I needs a **spatial weights matrix** that defines who is a
+"neighbor" of whom. With polygons (census tracts, counties), we often use
+shared borders (queen or rook contiguity). With **points**, like our
+sales with `latitude` and `longitude`, we define neighbors by distance
+instead:
+
+-   **k nearest neighbors**: each sale's $k$ closest sales (e.g. $k = 8$).
+    Every sale gets the same number of neighbors, so this is a common
+    choice for point data.
+-   **Distance band**: every sale within, say, 1 km. Easy to explain,
+    but sales in rural areas may end up with no neighbors.
+-   **Inverse distance**: all sales count, but closer ones count more.
+
+```{r warning=FALSE, message=FALSE}
+#install.packages("spdep") # run once
+library(spdep)  # spatial dependence: weights, Moran's I, spatial models
+
+# coordinates as a two column matrix: longitude (x) first, then latitude (y)
+coords <- cbind(sales$longitude, sales$latitude)
+
+# find each sale's 8 nearest sales
+# longlat = TRUE measures great circle distance in km (right for lat/long)
+# (R warns about "identical points": some homes sold more than once in 2023,
+#  or condos share one building location; knearneigh() still handles them)
+knn8 <- knearneigh(coords, k = 8, longlat = TRUE)
+nb8  <- knn2nb(knn8)  # convert to a neighbor list
+
+# turn the neighbor list into weights
+# style = "W" (row standardized): each sale's 8 neighbors get weight 1/8
+lw8 <- nb2listw(nb8, style = "W")
+
+# Moran's I test on the residuals of our linear model
+# H0: no spatial autocorrelation in the residuals
+lm.morantest(simple_lm, lw8)
+```
+
+**In our case**: Moran's I is about **0.50**, far above its expected value
+under no autocorrelation (about 0), and the p value is essentially zero.
+This is **strong positive spatial autocorrelation**: when the model
+underpredicts one home, it tends to underpredict its neighbors too. This
+matches what we saw with the outliers. The very expensive Medina and
+Lake Washington waterfront sales were not random misses; they were
+missed *together*, because the model does not know about location.
+
+The value of $I$ depends on how we define neighbors, so it is good
+practice to check a few choices:
+
+```{r warning=FALSE}
+# repeat the test with 4, 8 and 12 neighbors (this takes a little while)
+# the names k4, k8, k12 label the output
+sapply(c(k4 = 4, k8 = 8, k12 = 12), function(k) {
+  lw_k <- nb2listw(knn2nb(knearneigh(coords, k = k, longlat = TRUE)), style = "W")
+  unname(lm.morantest(simple_lm, lw_k)$estimate["Observed Moran I"]) # keep only Moran's I
+})
+```
+
+Moran's I stays around 0.49 to 0.52 for 4, 8 and 12 neighbors, so the
+conclusion does not depend on that choice.
+
+#### What Can We Do About Correlated Errors?
+
+We have now found **both** temporal autocorrelation (Breusch–Godfrey)
+and spatial autocorrelation (Moran's I). This breaks Assumption 2
+(independent errors). What does that mean for our results?
+
+**What still stands**
+
+-   **The coefficient estimates, if the only problem is correlated
+    errors.** If $X$ is still unrelated to the error (Assumption 4 holds),
+    OLS slopes stay **unbiased**. The line is still right on average.
+-   **R-squared and the fitted values** as a description of the data.
+
+**What does not stand**
+
+-   **Standard errors, t values, p values and confidence intervals.**
+    With positive autocorrelation, nearby sales carry partly the *same*
+    information, so we have less independent information than 15,409
+    sales suggest. The usual standard errors are **too small**, the
+    confidence intervals are **too narrow**, and the significance stars
+    look more convincing than they should.
+-   **"Best" (BLUE).** OLS is no longer the most precise estimator
+    (Gauss–Markov needs independent errors).
+-   **Be careful with the first point.** Spatial autocorrelation in the
+    residuals is often a **symptom of a missing variable** (location,
+    neighborhood quality, waterfront, views). If that missing variable
+    is also related to $X$ (bigger houses are more common in Medina),
+    Assumption 4 fails too, and then **the coefficients themselves are
+    biased**, not just their standard errors.
+
+**What we can do** (we will not run these here)
+
+| Approach | Idea | Fixes standard errors? | Fixes biased coefficients? |
+|---|---|---|---|
+| Robust standard errors | Keep the OLS estimates, recompute the standard errors to allow correlation: Newey–West (time), clustered by neighborhood or submarket, or Conley (spatial) | Yes | No |
+| Add the missing variables | Location fixed effects (city, submarket, census tract), time fixed effects (month of sale), waterfront and view variables | Often reduces the problem | Yes, if the missing variable was the cause |
+| Model the dependence directly | Spatial lag or spatial error models, multilevel (neighborhood) models, time series models | Yes | Depends on the model |
+
+The order usually matters: first ask **why** the errors are correlated.
+If something important is missing from the model, add it. Robust
+standard errors are a good second step, because they give honest
+uncertainty but cannot fix a wrong slope. (We will revisit spatial
+methods later in the course.)
+
+### Adjustment to the Regression
+
+Because the original model showed heteroscedasticity (the “fan shape”
+pattern in residual plots), we apply a log transformation to the $Y$
+`sale_price`. The log compresses the long upper tail of prices, so the
+very expensive homes are no longer so extreme.
+
+```{r fig.width=10, fig.height=8}
+# refit the model with log(sale_price) as Y
+log_simple_lm <- lm(data = sales, log(sale_price) ~ sqft + year_built)
+
+par(mfrow = c(2, 2))  # 2 x 2 grid: all four default diagnostic plots in one figure
+plot(log_simple_lm)   # with no "which", plot() draws the four standard panels
+par(mfrow = c(1, 1))  # reset the layout
+```
+
+**Reading the four panels** (compare each with the same plot for
+`simple_lm`):
+
+-   **Residuals vs Fitted** (top left): the fan shape is mostly gone.
+    Residuals now spread fairly evenly between about -1.5 and 2 on the
+    log scale. The red line is flat for most homes but bends down for
+    the few homes with fitted values above 15 (predicted prices above
+    about \$3.3 million). The model now slightly *over*predicts these.
+-   **Q–Q Residuals** (top right): much closer to the line than before
+    (the largest standardized residual drops from about 21 to about 6).
+    Both tails still bend away, giving a mild **S shape**: the errors
+    have heavier tails than a normal distribution, especially on the
+    upper side. Better, but not perfectly normal.
+-   **Scale–Location** (bottom left): this new panel plots the square
+    root of the absolute standardized residuals against fitted values.
+    A flat red line means equal variance. Here it rises at the low end,
+    stays flat in the middle and creeps up again at the high end, so some
+    unequal variance remains, but far less than before.
+-   **Residuals vs Leverage** (bottom right): no Cook's distance contour
+    is visible, so every sale is far below 0.5 (the largest Cook's D is
+    about 0.02). Sales 10189 and 1183 have the highest leverage (two very
+    large houses), but their residuals are moderate. Sale 460, the
+    biggest outlier before, still stands out (about 5) but is no longer
+    extreme.
+
+**Summary**: the log transformation fixes most of the unequal variance
+and removes the extreme influence, and the residuals are much closer to
+normal. It does not make the model perfect; the remaining heavy tails
+suggest that important variables (location, waterfront) are still
+missing.
+
+```{r}
+summary(log_simple_lm) # coefficients are now on the log price scale
+```
+
+You may notice that the $\beta$ in log-transformed model is quite small.
+Because of the transformation, our interpretation of $\beta$ could be
+different! Holding other variables constant, we change $X_1$ for one
+unit, we can write as:
+
+$$
+\begin{aligned}
+\log(Y_{changed}) & = \beta_0 + \beta_1 (X_1 + 1) + \beta_2 X_2 + \varepsilon \\
+                  & = \beta_0 + \beta_1 X_1  + \beta_2 X_2 + \varepsilon + \beta_1 \\
+                  & = \log(Y_{original}) + \beta_1\\
+\beta_1 & = \log(Y_{changed}) - \log(Y_{original}) \\
+        & = \log(\frac{Y_{changed}}{Y_{original}}) \\
+\exp(\beta_1) & = \frac{Y_{changed}}{Y_{original}}
+\end{aligned}
+$$
+
+We use `coef()` to get accurate $\beta$:
+
+```{r}
+coef(log_simple_lm) # print the coefficients with full precision
+```
+
+```{r}
+# exp(beta) = ratio of new price to old price for a one sqft increase
+exp(0.0003717023)
+```
+
+So, we can explain the relationship between sale price and square
+footage of house as: holding all year variables constant, the expected
+**percentage change** in price for 1 sqft increase is 0.3%.
+
+Note: if we want to know expected percentage change in price for 100
+sqft, it should be $1.000372^{100}$ (+3.79%) instead of
+$0.000372 \times 100$ (+3.72%).
+
+### Interactions and Non-linear Variables
+
+An interaction means that the **effect** of one variable depends on the
+level of another variable. For example, we may think of the effect of
+house size on price changes depending on the house’s condition. We can
+add interaction terms by using `*`. Note: R will add `condition` itself
+as an explanatory variable in the following model:
+
+```{r}
+# model without interaction: the effect of sqft is the same for every condition
+log_no_interaction_lm <- lm(data = sales, log(sale_price) ~ year_built + sqft + condition)
+
+# model with interaction: sqft * condition adds sqft, condition AND sqft:condition,
+# so the effect of sqft can change with the condition of the house
+log_interaction_lm <- lm(data = sales, log(sale_price) ~ year_built + sqft + sqft * condition)
+```
+
+You could also have variables in you specification that are squared,
+cubed etc. such as:
+
+```
+# I(sqft^2) adds a squared term; cos(sqft) shows any function of X can be used
+model7 <- lm(sale_price ~  sqft + I(sqft^2) + cos(sqft), data = sales)
+```
+
+The `I()` is a base R command that forces R to evaluate anything inside
+the `I()` before anything else. Sometimes it is needed when conducting
+regressions.
+
+### Compare Models
+
+When compare with several models, we can use `modelsummary` package to
+display and compare regression results in one formatted table. It helps
+us quickly see how coefficients, significance levels, and model fit
+change.
+
+```{r}
+# put both models in one table, one column per model
+modelsummary(
+  list(
+    "Without Interaction Model" = log_no_interaction_lm,
+    "Interaction Model" = log_interaction_lm
+  ),
+  stars = TRUE,  # add significance stars
+  fmt = 5,       # show 5 decimal places (log coefficients are small)
+  title = 'Comparison Table between Models with/without Interaction',
+  output = "html")
+```
+
+In an interaction model, the $\beta$ of individual variables (those also
+appearing in the interaction term) represent their effects only when the
+other interacting variable equals zero. So, it is a **baseline effect**
+and does not have much direct meanings. We must always interpret them
+together with the interaction term. In our interaction model:
+
+-   0.00026: effect of sqft when condition = 0 (condition cannot be 0 in
+    the data)
+-   -0.06512: effect of condition when sqft = 0 (square footage of house
+    is not likely to be 0)
+
+For the interaction term, we can explain as: with a one-unit increase in
+condition, holding other variables constant, the coefficient (slope) of
+sqft increases by 0.0003.
+
+We see a significant positive interaction: the positive effect of square
+footage on price is stronger for houses in better condition. In other
+words, larger houses benefit more from good condition than smaller ones.
+
+#### Performance Metrics
+
+**R-squared and Adjusted R-squared [larger - better]**: Mentioned in the
+lecture, R-squared shows how much of the variation in the response
+variable is explained by the model. Adjusted R-squared corrects for the
+number of predictors, so it is better for comparing models with
+different numbers of variables.
+
+**Root Mean Squared Error (RMSE) [smaller - better]**: Root of MSE,
+measures the average distance between the observed and predicted values.
+Smaller RMSE means better model fit.
+
+**Akaike’s Information Criterion (AIC) [smaller - better]**: AIC is good
+for unknown data generating process(The AIC tries to select the model
+that most adequately describes an unknown, high dimensional reality.
+Akaike’s Information Criteria is good for making asymptotically
+equivalent to cross-validation. You can check AIC using `AIC(model)`.
+
+**Bayesian Information Criterion (BIC) [smaller - better]**: BIC tries
+to find the TRUE model among the set of candidates. A lot of times, BIC
+and AIC will agrees on each other, but BIC penalize models that have a
+lot of parameters. Danger of underfit. Bayesian Information Criteria is
+good for consistent estimation. You can check BIC using `BIC(model)`.
+
+In general, our interaction model perform better in terms of all four
+metrics. And we will use this model to conduct prediction. Note: we may
+still need same assumption check for the new model.
+
+### Prediction
+
+We can use `predict` function to generate predicted values from a
+regression model.
+
+```{r}
+# predict() returns the fitted value for each row of newdata
+# note: the argument is "newdata" (an argument called "data" would be ignored)
+sales$predicted <- predict(log_interaction_lm, newdata = sales)
+
+# look at the prediction for the first sale
+sales$predicted[1]
+```
+
+Check the prediction, we find the value is extremely small (13.57 \<\<
+real sale price). We used log transformation to response variable! We
+need to transform the predicted values back by taking the exponential
+(exp) of each prediction to return them to the original sale price
+scale.
+
+```{r}
+# undo the log: exp(log(price)) = price
+sales$predicted_exp <- exp(sales$predicted)
+sales$predicted_exp[1]
+```
+
+------------------------------------------------------------------------
+
+## A Logistic Regression
+
+So far our $Y$ (sale price) is a continuous number. Many questions in
+real estate have a **yes or no** answer instead. Was the mortgage
+application denied? Did the household move? Did the property sell
+within 30 days? For a binary $Y$ (1/0), we use **logistic regression**.
+
+#### The HMDA Data
+
+We use the `HMDA` dataset from the `AER` package (Applied Econometrics
+with R). It comes from the well known Boston Fed study by Munnell et
+al. (1996), *Mortgage Lending in Boston: Interpreting HMDA Data*
+(American Economic Review), 
+which used Home Mortgage Disclosure Act (HMDA) records plus extra
+information collected from lenders. Each row is **one mortgage
+application** in the Boston area in 1990 ($N = 2{,}380$). The study
+asked whether race was associated with mortgage denial after accounting
+for the applicant's credit and financial profile.
+
+Key variables we use (see `?HMDA` for the full list):
+
+| Variable    | Meaning                                                    |
+|-------------|------------------------------------------------------------|
+| `deny`      | **Response**: was the mortgage denied? (no/yes)            |
+| `pirat`     | Payment to income ratio (total monthly debt / income)      |
+| `hirat`     | Housing expense to income ratio                            |
+| `lvrat`     | Loan to value ratio (loan amount / property value)         |
+| `chist`     | Consumer credit score, 1 (best) to 6 (worst)               |
+| `mhist`     | Mortgage credit score, 1 (best) to 4 (worst)               |
+| `phist`     | Public bad credit record? (no/yes)                         |
+| `selfemp`   | Is the applicant self employed? (no/yes)                   |
+| `insurance` | Was the applicant denied mortgage insurance? (no/yes)      |
+| `afam`      | Is the applicant African American? (no/yes)                |
+
+```{r message=FALSE}
+#install.packages("AER") # you only need to run the installation once
+library(AER)   # Applied Econometrics with R: includes the HMDA data
+data(HMDA)     # load the mortgage application data
+
+# make a 0/1 version of the response for plotting and summaries
+# (glm() can use the yes/no factor directly; the 0/1 copy is for our own plots and means)
+hmda <- HMDA %>%
+  mutate(deny01 = ifelse(deny == "yes", 1, 0))
+head(hmda)     # look at the first six rows
+```
+
+#### Exploring the Data
+
+With a binary $Y$, correlation and scatterplots are less helpful. Every
+point sits at 0 or 1. Instead, we look at the **share of $Y = 1$** across
+groups or across bins of $X$.
+
+```{r}
+# overall denial rate: the mean of a 0/1 variable is the share of 1s
+mean(hmda$deny01)
+
+# denial rate by race: count and share denied within each group
+hmda %>%
+  group_by(afam) %>%
+  summarise(n = n(), deny_rate = mean(deny01))
+```
+
+About 12% of all applications were denied. The raw denial rate is 28.3%
+for African American applicants and 9.3% for other applicants. This is a
+raw gap. It does not yet account for credit history, debt or loan size.
+
+```{r}
+ggplot(hmda, aes(x = pirat, y = deny01)) +
+  # jitter moves points up/down a little so the 0s and 1s do not sit on top of each other
+  geom_jitter(height = 0.05, size = 0.5, alpha = 0.4, color = "#85754d") +
+  # fit a one variable logistic regression and draw its S shaped curve with a 95% band
+  geom_smooth(method = "glm", method.args = list(family = binomial),
+              formula = y ~ x, color = "#4b2e83", linewidth = 0.7) +
+  coord_cartesian(xlim = c(0, 1)) +  # zoom in without dropping data from the fit
+  labs(x = "Payment to Income Ratio (pirat)",
+       y = "Denied (1) or Approved (0)",
+       title = "Mortgage Denial vs. Payment to Income Ratio") +
+  theme_minimal()
+```
+
+**Reading the plot**: each dot is one application, placed at 1 (denied,
+top band) or 0 (approved, bottom band) and jittered so they do not
+overlap. Most applicants have `pirat` between 0.2 and 0.45, so the bottom
+band is very dense there. The purple line is a one variable logistic
+fit. It is an **S shape** that stays between 0 and 1. The predicted
+denial probability is below 10% for ratios under about 0.3, then climbs
+quickly: about 25% at a ratio of 0.5 and about 60% at 0.75. The gray band
+(95% confidence interval) is narrow where data are dense and very wide
+above 0.5, where we only have a few applicants. (We zoom in to
+`pirat` $\le 1$; a few extreme values go up to 3.)
+
+#### Why Not a Linear Model?
+
+We *can* run `lm()` on a 0/1 outcome. This is called a **linear
+probability model (LPM)**. But look at the fitted values:
+
+```{r}
+# linear probability model: plain OLS on the 0/1 outcome
+lpm <- lm(deny01 ~ pirat + afam, data = hmda)
+
+# smallest and largest predicted "probability"
+range(fitted(lpm))
+```
+
+Some predicted "probabilities" are below 0 and some are above 1. That
+makes no sense. The LPM also breaks the equal variance assumption by
+design: for a 0/1 outcome, $Var(Y \mid X) = P(1-P)$, which changes with
+$X$. Logistic regression solves both problems.
+
+#### The Logistic Model
+
+Let $P = P(Y = 1 \mid X)$. Instead of modeling $P$ directly, we model the
+**log odds** (also called the *logit*):
+
+$$
+\log\left(\frac{P}{1-P}\right) = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \dots
+$$
+
+-   **Odds** $= \frac{P}{1-P}$. If $P = 0.2$, the odds are
+    $0.2 / 0.8 = 0.25$ (1 denial for every 4 approvals).
+-   The right side is still a linear combination of $X$, just like OLS.
+-   We can solve back for the probability:
+    $P = \frac{\exp(\beta_0 + \beta_1 X_1 + \dots)}{1 + \exp(\beta_0 + \beta_1 X_1 + \dots)}$,
+    which always stays between 0 and 1.
+
+The model is estimated by **maximum likelihood**, not least squares. In
+R, we use `glm()` (generalized linear model) with `family = binomial`.
+
+#### Fitting the Model
+
+We start with a simple model, then a fuller model with the credit and
+loan controls.
+
+```{r}
+# glm() = generalized linear model
+# family = binomial tells R the outcome is yes/no and to use the logit link
+logit_simple <- glm(deny ~ pirat + afam, data = hmda, family = binomial)
+summary(logit_simple)
+```
+
+```{r}
+# add credit history and loan controls
+# chist and mhist are factors, so R creates one dummy per level (except the reference)
+logit_full <- glm(deny ~ pirat + hirat + lvrat + chist + mhist + phist +
+                    selfemp + insurance + afam,
+                  data = hmda, family = binomial)
+summary(logit_full)
+```
+
+How to read the `glm()` table? Most parts look like the `lm()` table,
+with a few differences:
+
+-   **Estimate**: the change in the **log odds** of $Y = 1$ for a one
+    unit increase in $X$, holding other variables constant. The sign
+    tells the direction. The size is hard to read directly.
+-   **z value**: estimate divided by standard error. It plays the same
+    role as the t value in `lm()`. The test is $H_0: \beta = 0$.
+-   **Pr(\>\|z\|)**: the p value for that test.
+-   **Null deviance vs. Residual deviance**: deviance measures how badly
+    the model fits ($-2 \times$ log likelihood). The null deviance is for
+    a model with only the intercept. A large drop means the $X$s help.
+-   There is **no R-squared** and no residual standard error. We use
+    AIC, BIC and pseudo R-squared instead (see below).
+
+#### From Log Odds to Odds Ratios
+
+Log odds are not intuitive, so we usually report **odds ratios**. Like
+the log transformation in the linear model, we take `exp()` of $\beta$:
+
+$$
+\begin{aligned}
+\log(\text{odds}_{changed}) - \log(\text{odds}_{original}) & = \beta_1 \\
+\exp(\beta_1) & = \frac{\text{odds}_{changed}}{\text{odds}_{original}}
+\end{aligned}
+$$
+
+```{r}
+# coef() gives log odds; exp() turns them into odds ratios
+# confint() on a glm gives profile likelihood intervals; exp() puts them on the OR scale
+# cbind() glues the columns together into one table
+exp(cbind(OR = coef(logit_simple), confint(logit_simple)))
+```
+
+How to read an odds ratio (OR):
+
+-   OR $= 1$: no association.
+-   OR $> 1$: higher odds of $Y = 1$. OR $= 1.5$ means 50% higher odds.
+-   OR $< 1$: lower odds of $Y = 1$. OR $= 0.8$ means 20% lower odds.
+-   If the 95% confidence interval of the OR contains 1, the variable is
+    not significant at the 5% level.
+
+**In our case**: in `logit_simple`, the OR for `afamyes` is about 3.57
+(95% CI: 2.67 to 4.75). Holding the payment to income ratio constant,
+African American applicants have about 3.6 times the odds of denial.
+The OR for `pirat` is huge (about 215) because a one unit change in
+`pirat` (from 0 to 1, i.e. 0% to 100% of income) is a very large change.
+A 0.1 increase is more meaningful: $\exp(5.37 \times 0.1) \approx 1.71$,
+so 71% higher odds of denial. This is the same idea as the 100 sqft
+example in the linear model.
+
+> **Odds are not probabilities.** "3.6 times the odds" does **not** mean
+> "3.6 times as likely". When the outcome is rare (say below 10%), the two
+> are close. When it is common, they can be very different. We will
+> convert results to probabilities in the Prediction section.
+
+### Check Assumptions of Logistic Regression
+
+Logistic regression has **fewer** assumptions than OLS, but they are
+different. Compare with the six OLS assumptions above:
+
+| OLS assumption              | Logistic regression                                                  |
+|-----------------------------|----------------------------------------------------------------------|
+| 1\. Linearity in $Y$        | **Linearity in the log odds** for each continuous $X$                |
+| 2\. Independent errors      | **Still required**: independent observations                         |
+| 3\. No perfect collinearity | **Still required**: check VIF                                        |
+| 4\. Zero conditional mean   | **Still required**: no omitted confounders (design, not a plot)      |
+| 5\. Equal variance          | **Not required**: variance is $P(1-P)$ by design                     |
+| 6\. Normal errors           | **Not required**: $Y$ follows a binomial (Bernoulli) distribution    |
+| (new)                       | **Binary outcome**, **no extreme influential points**, **large enough sample** and **no (quasi) separation** |
+
+Because assumptions 5 and 6 are not required, the Q–Q plot from
+`plot(model)` is **not meaningful** for logistic regression. The
+residuals of a 0/1 outcome are never normal. Do not use it.
+
+#### Binary Outcome
+
+The response must have exactly two categories. `deny` is a factor with
+levels `no` and `yes`. R models the probability of the **second level**
+(`yes`), so check the level order.
+
+```{r}
+levels(hmda$deny) # R models P(second level), here P(deny = "yes")
+table(hmda$deny)  # how many of each outcome
+```
+
+#### Linearity in the Log Odds
+
+Logistic regression does not need $Y$ to be linear in $X$. It needs the
+**log odds** to be linear in each continuous $X$. A simple check is the
+**empirical logit plot**: cut $X$ into bins (here 10 equal sized
+groups), compute the share of denials in each bin, and convert it to log
+odds. If the points follow a straight line, the assumption is fine.
+
+```{r}
+emp_logit <- hmda %>%
+  # stack pirat and lvrat into one column so we can treat them the same way
+  pivot_longer(cols = c(pirat, lvrat), names_to = "variable", values_to = "xvalue") %>%
+  group_by(variable) %>%
+  mutate(bin = ntile(xvalue, 10)) %>%   # cut each X into 10 groups of equal size
+  group_by(variable, bin) %>%
+  summarise(x_mean = mean(xvalue),       # middle of the bin
+            p = mean(deny01),            # share denied in the bin
+            log_odds = log(p / (1 - p)), # convert the share to log odds
+            .groups = "drop")
+
+ggplot(emp_logit, aes(x = x_mean, y = log_odds)) +
+  geom_point(color = "#4b2e83", size = 2) +              # one point per bin
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, # straight reference line
+              color = "#b7a57a", linewidth = 0.5, linetype = "dashed") +
+  facet_wrap(~ variable, scales = "free_x") +
+  labs(x = "Mean of X within Bin", y = "Empirical Log Odds of Denial",
+       title = "Empirical Logit Plot (10 Bins)") +
+  theme_minimal()
+```
+
+**In our case**:
+
+-   `lvrat` (left panel): the points rise from about -3.2 to -1.0 and
+    follow the dashed line fairly well. The two bins in the middle are a
+    bit noisy, and the highest bin sits above the line, but there is no
+    clear curve. Roughly linear.
+-   `pirat` (right panel): the pattern is **not** a straight line. The
+    lowest bin (mean ratio about 0.18) has *higher* log odds than the next
+    few bins, then the points are flat around -2.5, and the highest bin
+    (mean about 0.5) jumps to about -0.5. This is a **J shape**. The
+    effect of debt is not constant: it matters little in the normal range
+    and a lot once the ratio gets high. (The slightly higher denial rate
+    at very low ratios may reflect applicants with unusual or incomplete
+    income records.)
+
+A formal check is the **Box–Tidwell test**. We add $X \times \log(X)$ for
+each continuous $X$. If that extra term is significant, the log odds are
+not linear in $X$. (It needs $X > 0$, so we drop a few zero values.)
+
+```{r}
+# log(X) needs X > 0, so drop the few rows with a zero ratio
+bt_data <- hmda %>% filter(pirat > 0, hirat > 0, lvrat > 0)
+
+# Box-Tidwell: add X * log(X) for each continuous X we want to test
+box_tidwell <- glm(deny ~ pirat + I(pirat * log(pirat)) + hirat +
+                     lvrat + I(lvrat * log(lvrat)) + chist + mhist +
+                     phist + selfemp + insurance + afam,
+                   data = bt_data, family = binomial)
+
+# show only the two test terms: a small p value means the logit is NOT linear in that X
+coef(summary(box_tidwell))[c("I(pirat * log(pirat))", "I(lvrat * log(lvrat))"), ]
+```
+
+The `pirat` term is significant (p ≈ 0.02) but the `lvrat` term is not
+(p ≈ 0.69). This confirms the plot: `pirat` needs some adjustment. You
+may also see the warning `fitted probabilities numerically 0 or 1
+occurred`. That is a hint of a few extreme points, which we check next.
+
+#### Influential Points
+
+Just like the linear model, a few unusual applications can pull the
+estimates. `plot(model, which = 4)` shows Cook's distance and
+`which = 5` shows residuals vs leverage. Both work for `glm()`.
+
+```{r fig.width=10, fig.height=4.5}
+par(mfrow = c(1, 2))         # two plots side by side
+plot(logit_full, which = 4)  # Cook's distance for every application
+plot(logit_full, which = 5)  # standardized Pearson residuals vs leverage
+par(mfrow = c(1, 1))         # reset the layout
+```
+
+```{r}
+# look at the three rows labeled in the plots
+hmda[c(801, 1321, 412), c("deny", "pirat", "hirat", "lvrat", "insurance")]
+
+# how many applications have debt payments larger than income?
+sum(hmda$pirat > 1)
+```
+
+**Reading the plots**:
+
+-   **Cook's distance** (left): one spike per application. The largest
+    values are rows 801 (about 0.044), 1321 (0.029) and 412 (0.025).
+    All are far below 0.5. Most applications are close to 0.
+-   **Residuals vs Leverage** (right): the points form **two curved
+    bands**. This always happens with a 0/1 outcome. The upper band is
+    the denied applicants (positive residuals), the lower band is the
+    approved ones (negative residuals). Do not read the bands as a
+    problem. Row **801** has the most extreme residual (about -7): the
+    model gave it a very high chance of denial, but it was approved.
+    Rows **1321** and **412** have the highest leverage of the labeled
+    points because their debt ratios are extreme. The Cook's 0.5
+    contours sit far away in the corners, so no point is highly
+    influential.
+
+**What are these rows?** Row 1321 has a payment to income ratio of 1.28,
+meaning monthly debt payments are larger than income. Five applications
+have `pirat` $> 1$, and one has `pirat` $= 3$. These are very likely data
+entry errors. Row 801 is different: its loan to value ratio is 1.95 (a
+loan almost twice the home value), and it was **denied mortgage
+insurance but still approved**. Only 4 of the 48 applicants denied
+insurance were approved, which is why the model is so surprised.
+
+#### Should We Remove the Flagged Applications?
+
+We follow the same four steps as in the linear model (see the table of
+metrics there). For `glm()`, `rstandard(model, type = "pearson")` gives
+the standardized Pearson residuals shown in the plot.
+
+```{r}
+n_g <- nobs(logit_full)          # number of applications
+k_g <- length(coef(logit_full))  # number of coefficients
+
+cooks_g <- cooks.distance(logit_full)  # Cook's distance for each application
+
+# Step 1: how many rows does each rule flag?
+c(pearson_r3    = sum(abs(rstandard(logit_full, type = "pearson")) > 3),
+  leverage_3k_n = sum(hatvalues(logit_full) > 3 * k_g / n_g),
+  cooks_4_n     = sum(cooks_g > 4 / n_g),
+  cooks_0.5     = sum(cooks_g > 0.5))
+```
+
+The pattern is the same as before: the loose rules flag many rows (215
+above $4/n$), and the strict rule flags none.
+
+```{r}
+# Step 3: sensitivity analysis, refit under three choices
+logit_no_pirat1 <- update(logit_full, data = hmda[hmda$pirat <= 1, ]) # drop pirat > 1
+logit_no_801    <- update(logit_full, data = hmda[-801, ])            # drop row 801
+logit_no_4n     <- update(logit_full, data = hmda[cooks_g <= 4 / n_g, ]) # drop all 215
+
+# compare the odds ratios of a few key variables across the four fits
+round(rbind(
+  "All rows"            = exp(coef(logit_full)),
+  "Drop pirat > 1"      = exp(coef(logit_no_pirat1)),
+  "Drop row 801"        = exp(coef(logit_no_801)),
+  "Drop Cook's D > 4/n" = exp(coef(logit_no_4n))
+)[, c("pirat", "lvrat", "insuranceyes", "afamyes")], 2)
+```
+
+**What the sensitivity analysis shows**:
+
+-   Dropping the five rows with `pirat` $> 1$ mainly changes the `pirat`
+    odds ratio (from about 170 to 252). The other odds ratios barely
+    move.
+-   Dropping row 801 raises the odds ratios for `lvrat` and `insurance`,
+    because this one approved applicant with a huge loan to value ratio
+    and an insurance denial was "pulling them down". The `afamyes` odds
+    ratio stays about 2.0.
+-   Dropping all 215 rows above $4/n$ **breaks the model**. R warns
+    `fitted probabilities numerically 0 or 1 occurred`, the insurance
+    odds ratio explodes to an absurd number, and the `afamyes` odds ratio
+    doubles to 4.3. Deleting the applications the model fits worst leaves
+    data that are too "clean", close to perfect separation. Never delete
+    rows only because a rule of thumb flags them.
+
+**Our decision**:
+
+-   **Remove the five applications with `pirat` $> 1$.** Payments larger
+    than income are almost certainly recording errors, and they are
+    outside the population of realistic mortgage applicants.
+-   **Keep row 801**, but note it. A loan to value ratio of 1.95 is
+    unusual, but we cannot confirm it is an error, and our key variable
+    (`afamyes`) does not depend on it. In the adjusted model below, we
+    also group `lvrat` into categories, so this single extreme value no
+    longer has extra leverage.
+-   **Report** both choices and the sensitivity table.
+
+#### Multicollinearity
+
+VIF works the same way for `glm()`. When a model has factors with more
+than two levels (like `chist`), `car::vif()` reports a **generalized VIF
+(GVIF)**. Use the last column, $GVIF^{1/(2 \cdot Df)}$, and square it to
+compare with the usual cutoffs of 5 and 10.
+
+```{r}
+# for factors with several levels, car::vif() reports GVIF
+# square the last column, GVIF^(1/(2*Df)), to compare with the usual 5 and 10 cutoffs
+vif(logit_full)
+```
+
+**In our case**: all values are below 2. `pirat` and `hirat` are
+correlated (housing costs are part of total debt), but not enough to be a
+problem.
+
+#### Independence of Observations
+
+Each application should be a separate draw. Here each row is a different
+applicant, so this is more reasonable than our housing sales data. But
+applications to the **same bank** or in the **same neighborhood** may
+share unobserved factors (lender policies, local market). The fix is the
+same as in the linear model: clustered or robust standard errors.
+Durbin–Watson is not used here because the data have no time order.
+
+#### Sample Size and Separation
+
+Logistic regression uses maximum likelihood, which needs a large enough
+sample. A common rule of thumb is at least **10 events per variable
+(EPV)**: the number of the rarer outcome divided by the number of
+coefficients (excluding the intercept).
+
+```{r}
+# events per variable = number of denials / number of slopes (intercept excluded)
+sum(hmda$deny01) / (length(coef(logit_full)) - 1)
+```
+
+We have 285 denials and 15 coefficients, so EPV ≈ 19. That is fine.
+
+**Separation** happens when an $X$ (or a group of $X$s) predicts $Y$
+perfectly. The estimate then runs off toward infinity, and R gives the
+warning `fitted probabilities numerically 0 or 1 occurred`. Check
+cross tables for binary $X$s:
+
+```{r}
+# cross table: are there cells with (almost) no observations?
+table(insurance = hmda$insurance, deny = hmda$deny)
+
+# the odds ratio for insurance denial
+exp(coef(logit_full)["insuranceyes"])
+```
+
+Of the 48 applicants denied mortgage insurance, 44 were also denied the
+mortgage. This is close to separation. That is why its odds ratio is
+about 96 with a large standard error. It is not perfect separation, so
+the model still runs, but we should read this coefficient with care.
+
+#### Binned Residual Plot
+
+The Residuals vs Fitted plot from `plot(model, which = 1)` is hard to
+read for 0/1 data. You always see two curved bands of points. A better
+tool is the **binned residual plot** ([Gelman and Hill,
+2007](http://www.stat.columbia.edu/~gelman/arm/)). We sort observations
+by predicted probability, cut them into bins, and plot the average
+residual in each bin. About 95% of the points should fall inside the
+$\pm 2$ standard error bands.
+
+```{r}
+binned <- hmda %>%
+  mutate(p_hat = fitted(logit_full),   # predicted probability for each applicant
+         resid = deny01 - p_hat,       # raw residual: observed (0/1) minus predicted
+         bin = ntile(p_hat, 20)) %>%   # 20 groups of equal size by predicted probability
+  group_by(bin) %>%
+  summarise(p_mean = mean(p_hat),      # average prediction in the bin
+            resid_mean = mean(resid),  # average residual in the bin
+            se2 = 2 * sqrt(p_mean * (1 - p_mean) / n())) # +/- 2 standard errors
+
+ggplot(binned, aes(x = p_mean, y = resid_mean)) +
+  geom_ribbon(aes(ymin = -se2, ymax = se2), fill = "#e8e3d3") + # band where ~95% of points should fall
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+  geom_point(color = "#4b2e83", size = 2) +
+  labs(x = "Mean Predicted Probability of Denial", y = "Mean Residual",
+       title = "Binned Residual Plot (20 Bins)") +
+  theme_minimal()
+```
+
+**Interpretation**: if many points fall outside the band, or the points
+form a clear pattern, the model is missing something (a nonlinear term,
+an interaction or an omitted variable). Like before, a good looking plot
+does **not** prove zero conditional mean.
+
+**In our case**: all 20 points sit inside the band, and they move above
+and below zero without a clear trend. Most bins have predicted
+probabilities below 0.2, because most applicants have a low chance of
+denial; the last bin (about 0.75) holds the high risk applicants. The
+band is narrow near 0 and wider in the middle, because the binomial
+variance $P(1-P)$ is largest near 0.5. Two bins around 0.13 to 0.17 sit
+a little low (the model slightly overpredicts denial there), but they are
+still inside the band. Overall, the fit looks acceptable.
+
+### Adjustment to the Logistic Regression
+
+Based on the checks, we make three changes:
+
+1.  **Remove the five applications with `pirat` $> 1$**. Payments larger
+    than income are not realistic for a mortgage applicant.
+2.  **Add a squared term for `pirat`** using `I()`, so the effect of debt
+    can grow faster at high ratios.
+3.  **Group `lvrat` into categories**: low ($< 0.8$), medium
+    ($0.8$ to $0.95$) and high ($0.95$ or above). Lenders often use these cutoffs
+    because a loan above 80% of the home value usually needs mortgage
+    insurance.
+
+```{r}
+hmda_clean <- hmda %>%
+  filter(pirat <= 1) %>%              # drop the 5 applications with payments above income
+  mutate(lvrat_cat = cut(lvrat,       # turn loan to value into three groups
+                         breaks = c(-Inf, 0.8, 0.95, Inf),
+                         labels = c("low", "medium", "high"),
+                         right = FALSE)) # intervals like [0.8, 0.95): 0.8 goes to "medium"
+
+# check how many applications (and denials) fall in each group
+table(hmda_clean$lvrat_cat, hmda_clean$deny)
+```
+
+To compare models fairly with AIC or BIC, they **must use the same
+data**. So we refit the original model on `hmda_clean` first.
+
+```{r}
+# update() refits an existing model; here only the data change
+logit_clean <- update(logit_full, data = hmda_clean)
+
+# adjusted model: squared pirat term + loan to value groups
+# I() tells R to compute pirat^2 as a number before using it in the formula
+logit_adj <- glm(deny ~ pirat + I(pirat^2) + hirat + lvrat_cat + chist +
+                   mhist + phist + selfemp + insurance + afam,
+                 data = hmda_clean, family = binomial)
+summary(logit_adj)
+```
+
+With a squared term, we cannot read `pirat` alone. The linear term is
+negative but not significant, and the squared term is positive and
+significant. Together they say: denial odds change little at low debt
+ratios and rise quickly at high ones. This matches the empirical logit
+plot.
+
+### Compare Logistic Models
+
+#### Likelihood Ratio Test
+
+For nested models (one model is the other plus extra terms), the
+**likelihood ratio test** checks whether the extra terms improve the
+fit. It compares the deviances. Here we test whether the squared term is
+needed.
+
+```{r}
+# the same model without the squared term (". ~ . -" means keep everything, minus this)
+logit_no_sq <- update(logit_adj, . ~ . - I(pirat^2))
+
+# likelihood ratio test: does the bigger model fit significantly better?
+anova(logit_no_sq, logit_adj, test = "Chisq")
+```
+
+The p value is about 0.004, so the squared term significantly improves
+the model.
+
+#### Model Summary Table
+
+`modelsummary` works with `glm()` too. Use `exponentiate = TRUE` to show
+odds ratios instead of log odds.
+
+```{r}
+modelsummary(
+  list(
+    "Simple" = logit_simple,
+    "Full (cleaned data)" = logit_clean,
+    "Adjusted" = logit_adj
+  ),
+  exponentiate = TRUE, # show odds ratios instead of log odds
+  stars = TRUE,        # significance stars
+  fmt = 3,             # 3 decimal places
+  title = "Logistic Regression of Mortgage Denial (Odds Ratios)",
+  output = "html")
+```
+
+#### Performance Metrics
+
+**AIC and BIC [smaller - better]**: same meaning as in the linear model.
+
+**Pseudo R-squared [larger - better]**: there is no true R-squared for
+logistic regression. The most common substitute is **McFadden's pseudo
+R-squared**, $1 - \frac{\log L_{model}}{\log L_{null}}$. Values between
+0.2 and 0.4 are usually seen as a good fit. Do not compare it directly
+with an OLS R-squared.
+
+```{r}
+# null model: intercept only, used as the baseline for pseudo R-squared
+logit_null <- glm(deny ~ 1, data = hmda_clean, family = binomial)
+
+# small helper function: McFadden pseudo R-squared = 1 - logLik(model) / logLik(null)
+mcfadden <- function(model) {
+  1 - as.numeric(logLik(model)) / as.numeric(logLik(logit_null))
+}
+
+# collect the fit measures of both models in one small table
+data.frame(
+  model = c("Full (cleaned data)", "Adjusted"),
+  AIC = c(AIC(logit_clean), AIC(logit_adj)),
+  BIC = c(BIC(logit_clean), BIC(logit_adj)),
+  McFadden_R2 = c(mcfadden(logit_clean), mcfadden(logit_adj))
+)
+```
+
+**In our case**: the adjusted model has lower AIC (1283 vs 1301), lower
+BIC (1387 vs 1393) and higher pseudo R-squared (0.278 vs 0.265). We will
+use it for prediction.
+
+Look at `afamyes` across the three models in the table. The odds ratio
+drops from about 3.6 (simple) to about 1.9 (adjusted). Much of the raw
+gap is linked to differences in credit history and debt. But a
+significant gap remains after these controls. This is an *association*
+in observational data. It does not by itself prove discrimination,
+because other relevant factors may still be missing.
+
+### Prediction with Logistic Regression
+
+`predict()` for a `glm()` model has two scales, set by `type`:
+
+-   `type = "link"` (default): the predicted **log odds**.
+-   `type = "response"`: the predicted **probability** of $Y = 1$.
+
+```{r}
+predict(logit_adj, type = "link")[1]     # first applicant: predicted log odds
+predict(logit_adj, type = "response")[1] # first applicant: predicted probability
+
+# plogis() converts log odds back to probability: exp(x) / (1 + exp(x))
+plogis(predict(logit_adj, type = "link")[1])
+```
+
+This is the same issue we had with the log price model. The default
+output (-2.10) is on the transformed scale. We need to transform it back,
+here with the logistic function instead of `exp()`. The first applicant
+has about an 11% predicted chance of denial.
+
+#### From Probability to Classification
+
+To turn probabilities into yes/no predictions, we pick a **threshold**.
+The default choice is 0.5.
+
+```{r}
+# predicted probability of denial for every applicant
+hmda_clean$p_hat <- predict(logit_adj, type = "response")
+
+# classify: "yes" if the probability is above 0.5
+hmda_clean$pred_05 <- ifelse(hmda_clean$p_hat > 0.5, "yes", "no")
+
+# confusion matrix: rows = what the model says, columns = what really happened
+table(predicted = hmda_clean$pred_05, actual = hmda_clean$deny)
+```
+
+The overall accuracy is $(2066 + 93) / 2375 \approx 91\%$. That sounds
+good, but a model that predicts "no" for everyone would already be about
+88% accurate, because only 12% of applications are denied. Our model
+only catches 93 of the 281 denials (33%).
+
+When the outcome is rare, a lower threshold is often more useful. Try
+the overall denial rate as the threshold:
+
+```{r}
+# use the overall denial rate (about 0.12) as the threshold instead of 0.5
+hmda_clean$pred_rate <- ifelse(hmda_clean$p_hat > mean(hmda_clean$deny01), "yes", "no")
+table(predicted = hmda_clean$pred_rate, actual = hmda_clean$deny)
+```
+
+Now we catch 199 of 281 denials (71%), but we also flag 375 approved
+applications by mistake. The right threshold depends on the cost of each
+type of error. We will look at this trade off (ROC curves, AUC) in
+Part B.
+
+#### Average Marginal Effect: Back to Probabilities
+
+Odds ratios are hard to explain to a general audience. An **average
+marginal effect (AME)** reports the change in **probability** instead.
+For a binary $X$ like `afam`, we predict every applicant twice, once with
+`afam = "yes"` and once with `afam = "no"`, keep everything else the
+same, and average the difference.
+
+```{r}
+# two copies of the data: everyone set to afam = "yes", and everyone set to "no"
+# (all other columns stay exactly as observed)
+data_yes <- hmda_clean %>% mutate(afam = factor("yes", levels = c("no", "yes")))
+data_no  <- hmda_clean %>% mutate(afam = factor("no",  levels = c("no", "yes")))
+
+# predict both versions for every applicant, take the difference, then average it
+mean(predict(logit_adj, newdata = data_yes, type = "response") -
+     predict(logit_adj, newdata = data_no,  type = "response"))
+```
+
+Holding all other variables at their observed values, being an African
+American applicant is associated with about a **5.5 percentage point**
+higher probability of denial. Compare this with the odds ratio of about
+1.9 for the same variable. Both are correct, but they answer different
+questions. (The `marginaleffects` package automates this for any
+model.)
+
+------------------------------------------------------------------------
+
+### 📚 TODO: Explain the Results of Linear Regression
+
+**6 points**
+
+**You may discuss in small group, but you must prepare the submission by
+yourself. Generative AI is NOT allowed for write-up questions. This
+question does not require new coding — use the models you fit above
+(`simple_lm`, `log_simple_lm`, and the interaction models).**
+
+These questions ask you to read and interpret your *own* Part A output.
+
+1.  [1 pt] In `simple_lm`, pick the coefficient on `sqft`. Write one
+    sentence interpreting it in plain words, including its units
+    (dollars per square foot) and whether it is statistically
+    significant. How does its interpretation differ from the `sqft`
+    coefficient in `log_simple_lm`?
+    
+    Hold year_built constant, every additional 1 sqft adds $501 value with p < 2e-16, means that is statistially significant. For the `log_simple_lm` one, the coefficient is the affct on log price, means that it shuold be interpreted as the exponentital function, which is the exponent of e. which roughly equallys 1.00036887, means that additional 1 sqft adds 0.037% of value.
+2.  [1 pt] Look back at the Residuals vs Fitted and Q–Q plots for
+    `simple_lm`. Which two OLS assumptions showed problems, and what did
+    the log transformation of `sale_price` do to them?
+    Assumption 5: residuals vs. fitted diagram is funnel shape, means that the higher the fitted value, more scattered the residual value becomes.
+    Assumption 6: the points on the right side of the Q-Q plot curve is sharply upward, means that the residual value is higher when standardized residuals are higher. It may indicate that some properties are significantly undervalued by the model. After log, the residual values are more evenly spread, largest standaridized residuals decreased from 20 to about 6, but there remains a slight S-shape, indicating that the problem is not fully solved. 
+3.  [1 pt] We said a flat red line in Residuals vs Fitted does **not**
+    prove zero conditional mean ($E[\varepsilon \mid X] = 0$). Name one
+    variable that is almost certainly omitted from `simple_lm` and
+    explain which direction it would bias the `sqft` coefficient.
+    Location/View/Waterfront would be the omitted variable bias Better location has a positive effect on price, while houses in those location is oftenly larger, which also has a positive effect. The two positive effect makes the coefficient of sqft to be overestimated, as some premium of better location is wrongfully counted in size.
+4.  [1 pt] Compare the "Without Interaction" and "Interaction" models in
+    the `modelsummary` table. Using Adjusted R-squared and AIC/BIC,
+    which model would you choose and why? Does the significant
+    interaction term change how you interpret the `sqft` effect?
+    Interaction model's Adj.R square is higher, both AIC and BIC are lower, therefore I would choose it.The significant interaction does change how we interpret sqft. Without the intercration varaiable, the model gives all properties a rigid slope for sqft, when with it, the slope is about 0.00023 + 0,00004*condition. While 0.00023 represents the slope when condition is 0, which is probably not possible. The positive interaction means that condition adds value to the property when other varaiables are held constant. 
+5.  [1 pt] The VIF and Durbin–Watson results: report the values you got.
+    Did either flag a concern? Given these are 2023 King County sales,
+    why might the independence assumption still be violated even if
+    Durbin–Watson looks acceptable?
+    VIF: Both sqft and year_built are 1.096, far lower than 5, means that there is little  multicollinerarity 
+    Durbin-Watson: 1.648, which is acceptable, means autocoorelation is okay.
+    Even if DW is close to 2, the residuals may still show positive spatial autocorrealtion becasue nearby homes share neighbourhood characteristics. 
+6.  [1 pt] In the Prediction section, the first raw prediction from the
+    log model was about 13.57, far below any real sale price. Explain why
+    that happened and what `exp()` fixes. Then interpret: for the
+    interaction model, why can't we read `exp(coef)` on the `sqft` main
+    effect as "the price change per sqft" the same way we did for
+    `log_simple_lm`?
+    
+    Because the model's outcome is log(slae_price), predict function returns a log price, not actual money, exp function converts it back to dollars. In log_simple_lm, exp(β) is a constant multiplier. In the interaction model, the sqft effect is 0.00023 + 0.00004 * condition, so the multiplier exp (0.00023 + 0.0004 * condition) depends on condition, exp (0.00023) alone applies only when condition = 0, which is virtually impossible. 
+
+---
+
+### 📚 TODO: Apply and Interpret Logistic Regression (HMDA)
+
+**10 points**
+
+**You may discuss in small group, but you must prepare the submission by
+yourself. Generative AI is allowed for the coding parts, but NOT for
+write-up answers. Your submission should be HTML or PDF knitted from
+this Rmd, with your code and output visible.**
+
+Use the models you fit in the logistic regression section above
+(`logit_simple`, `logit_full`, `logit_adj`) and the `hmda_clean` data.
+
+#### Reading the Model
+
+1.  [1 pt] Using `logit_adj`, report the odds ratio and its 95%
+    confidence interval for `phistyes` (public bad credit record). Write
+    one sentence interpreting it in plain words. Is it statistically
+    significant? How can you tell from the confidence interval alone?
+```{r}
+round(exp(c(OR = unname(coef(logit_adj)["phistyes"]),
+            confint(logit_adj, parm = "phistyes"))), 4)
+
+summary(logit_adj)
+```
+    
+    Holding other variables constant, applicants with a public bad credit history have 3.58x the odds or mortgage denial.It is statistically significant as p=1.40e-09 < 0.001.The confidence interval lies entirely above 1 with value corresponding to eqaul odds (i.e. the interval of 2.4-5.4 is way higher than "1" that means no effect on denial chance), so it is significant at 5% level.
+
+2.  [1 pt] `chist` is a factor with six levels. What is the reference
+    category, and how do you know? Report the odds ratio for `chist6`
+    and interpret it relative to the reference category.
+```{r}
+levels(hmda_clean$chist)
+contrasts(hmda_clean$chist)
+exp(coef(logit_adj)["chist6"])
+```
+Level 1 is the reference category. Its row in the contrast matrix contains only zeros, the the coefficient table has separate terms for levels 2 through 6. Ceteris paribus, applicants in category 6 have 4.7x denial odds than category 1 .
+
+#### Building and Checking a New Model
+
+3.  [2 pts] Fit a new model called `logit_ext` that adds `single`,
+    `hschool` and `unemp` to `logit_adj`. (Hint: `update(logit_adj, . ~ .
+    + single + hschool + unemp)`.)
+    -   Run a likelihood ratio test comparing `logit_adj` and
+        `logit_ext`. What are the null and alternative hypotheses? What
+        do you conclude?
+    -   Report the AIC and BIC of both models. Do they agree? Explain why
+        they might give different answers, and say which model you would
+        keep.
+    -   Report the events per variable (EPV) for `logit_ext`. Is the
+        sample still large enough?
+        
+```{r}
+logit_ext <- update(logit_adj, . ~ . + single + hschool + unemp)
+stopifnot(identical(rownames(model.frame(logit_adj)),
+                    rownames(model.frame(logit_ext))))
+anova(logit_adj, logit_ext, test = "LRT")
+
+data.frame(model = c("Adjusted", "Extended"),
+           AIC = AIC(logit_adj, logit_ext)$AIC,
+           BIC = BIC(logit_adj, logit_ext)$BIC)
+
+events <- sum(model.response(model.frame(logit_ext)) == "yes")
+slopes <- logit_ext$rank - 1
+c(events = events, slopes = slopes, EPV = events / slopes)
+```
+       The likelihood ratio test rejects the null that all three added coefficients are zero, indicating that at least one different from 0. I would keep logit_ext because fit improves and AIC falls from 1283.4 to 1276.22. BIC penalizes complexity more heavily and rises from 1387.31 to 1397.45, favouring logit_adj. EPV is 14.05, > guideline of 10.  
+4.  [1 pt] Run `vif()` on `logit_ext`. Square the last column and report
+    the values for `pirat` and `I(pirat^2)`. Are these a real
+    multicollinearity problem? (Hint: think about how `I(pirat^2)` is
+    built from `pirat`.)
+    
+```{r}
+v <- car::vif(logit_ext)
+v[c("pirat", "I(pirat^2)"), ncol(v)]^2
+```
+    VIF is 16.62 for pirat and 15.63 for pirat2. Their expected collinearity can inflate standard errors, but I would keep both terms to capture the nonlinear realtionship. 
+
+#### Prediction
+
+5.  [2 pts] Use `logit_adj` to predict the probability of denial for
+    the hypothetical applicant below, once with `afam = "no"` and once
+    with `afam = "yes"`.
+
+    ```
+    # helper: build a factor with the same levels as the column in hmda_clean
+    # (predict() needs new data to use exactly the same factor levels)
+    lv <- function(v, x) factor(x, levels = levels(hmda_clean[[v]]))
+
+    # one row per scenario: same applicant, afam = "no" (row 1) and "yes" (row 2)
+    applicant <- data.frame(
+      pirat = 0.35, hirat = 0.28, lvrat_cat = lv("lvrat_cat", "medium"),
+      chist = lv("chist", "2"), mhist = lv("mhist", "2"),
+      phist = lv("phist", "no"), selfemp = lv("selfemp", "no"),
+      insurance = lv("insurance", "no"), afam = lv("afam", c("no", "yes"))
+    )
+    ```
+
+    -   Report the two predicted probabilities and their difference in
+        percentage points.
+    -   Compute the ratio of their **odds**, and compare it with
+        `exp(coef(logit_adj)["afamyes"])`. Why are the two numbers the
+        same, while the ratio of the two **probabilities** is not?
+```{r}
+lv <- function(v, x) factor(x, levels = levels(hmda_clean[[v]]))
+applicant <- data.frame(
+  pirat = 0.35, hirat = 0.28, lvrat_cat = lv("lvrat_cat", "medium"),
+  chist = lv("chist", "2"), mhist = lv("mhist", "2"),
+  phist = lv("phist", "no"), selfemp = lv("selfemp", "no"),
+  insurance = lv("insurance", "no"), afam = lv("afam", c("no", "yes"))
+)
+p <- unname(predict(logit_adj, newdata = applicant, type = "response"))
+odds <- p / (1 - p)
+data.frame(afam = applicant$afam, probability = p, odds = odds)
+```
+```{r}
+c(difference_percentage_points = 100 * diff(p),
+  odds_ratio = odds[2] / odds[1],
+  exp_coefficient = unname(exp(coef(logit_adj)["afamyes"])),
+  probability_ratio = p[2] / p[1])
+```
+  Changing afam from no to yes raises predicted denail probability from 9.88% to 17.29%. Since β_afam measures the change in log-odds, exponentiating gives the odds rator of 1.90656. Dividing the probability gives 1.749836.
+        
+6.  [1 pt] Build a confusion matrix for `logit_adj` with a threshold of
+    0.3. Report (a) the share of actual denials the model catches and
+    (b) the share of actual approvals it wrongly flags. Compared with the
+    0.5 threshold in the lab, what did you gain and what did you lose?
+    
+```{r}
+p_hat <- fitted(logit_adj)
+for (threshold in c(0.3, 0.5)) {
+  predicted <- factor(ifelse(p_hat > threshold, "yes", "no"),
+                      levels = c("no", "yes"))
+  cm <- table(predicted, actual = hmda_clean$deny)
+  print(threshold)
+  print(cm)
+  print(c(denials_caught = cm["yes", "yes"] / sum(cm[, "yes"]),
+          approvals_flagged = cm["yes", "no"] / sum(cm[, "no"])))
+}
+```
+    At 0.3, the model catches 134 of the 281 actual denials, and wrongfuly flags 84 of the 2,094 approvals. At 0.5, it is 93 and 28. Lowering the threshold identifies 41 additional denials in the cost of 56 extra false alarms. 
+
+#### Linking the Linear and Logistic Models
+
+7.  [1 pt] In both `log_simple_lm` and `logit_adj` we take `exp()` of a
+    coefficient. Explain what `exp(coef)` means in each model (what is
+    being multiplied?). Then explain why `predict()` returned 13.57 for
+    the log price model and -2.10 for the logistic model, and which
+    function brings each back to a meaningful scale.
+```{r}
+exp(predict(log_interaction_lm, newdata = sales[1, ]))
+
+eta <- unname(predict(logit_adj, type = "link")[1])
+c(log_odds = eta, odds = exp(eta), probability = plogis(eta))
+```
+    Holding other variables fixed, exp(β_sqft) multiplies fitted price /sqft. exp(β_afam) multiples denials odds when afam changes from no to yes. exp(13.57456) converts log price to $785.877 and plogis (-2.102765) converts log-odds to a 10.88* denical chance. 
+    
+8.  [1 pt] The odds ratio for `afamyes` drops from about 3.6 in
+    `logit_simple` to about 1.9 in `logit_adj`. Using the omitted
+    variable reasoning from the linear TODO (Question 3), explain why it
+    dropped. Name one variable that is **not** in the HMDA data but could
+    still bias the `afamyes` estimate, and say why we should call the
+    result an *association* rather than proof of discrimination.
+    
+```{r}
+logit_simple <- glm(deny ~ pirat + afam, data = HMDA, family = binomial())
+# The middle column isolates the change in sample from the change in model.
+simple_clean <- update(logit_simple, data = hmda_clean)
+sapply(list(simple_original = logit_simple, simple_clean = simple_clean,
+            adjusted_clean = logit_adj),
+       function(model) unname(exp(coef(model)["afamyes"])))
+```
+    The simple model contorls only for payment-to-income ratio. The afam odds ratio falls from 3.57 to 1.91 in the adjusted model, means that the differnce in credit history and loan characteristics is partially the explaner of the gap. Liquid savings remain unmeasured, this could be a estimation bias if savings differed across groups and influenced lending decisions. The remaining association alone cannot establish discrimination. The logistic regression estimates how denial odds differ across racial groups after accounting for the financial informaiton in he data, it cannot account for other human decision factors such as history and personal bias. 
+
+---
+
+### 📖 Optional: Logistic Regression in a Research Paper (Not Graded)
+
+**Optional and not graded.** This reading shows how the logistic
+regression from the lab is used in published housing research. It is
+good practice for your final project and for reading papers in other
+courses.
+
+**This section does not require any coding or submission.**
+
+In this section, we will read a recent research paper published by
+Runstad Department faculty Rebecca J. Walter, Arthur Acolin, Ruoniu
+(Vince) Wang, Gregg Colburn, along with people from other institutions:
+[**Exploring the association between household compositional change and
+mobility of subsidized householders in the United
+States**](https://doi.org/10.1080/07352166.2024.2371380). You are able
+to find the PDF version within the lab folder.
+
+This study examines the relationship between household compositional
+change (such as a partner, child, or adult entering or leaving the
+household) and residential mobility of subsidized householders in the
+US. They use the Annual Longitudinal Files 2005–2018 from U.S.
+Department of Housing and Urban Development, which is restricted-use
+data required researchers to apply to access. [Northwest Federal
+Statistical Research Data
+Center](https://csde.washington.edu/services/northwest-federal-statistical-research-data-center/)
+is the center within UW partnered with U.S. Census Bureau to provide
+such data access.
+
+Please skim the paper first and use the following to guide your further
+reading, especially about the **Data and methods** and **Results**
+parts.
+
+#### Settings
+
+1.  What is the unit of analysis of this study? What is the
+    sample size $N$? Is this study cross-sectional or longitudinal
+    (lecture 2 data)?
+2.  Why do you think U.S. Census Bureau requires us apply for
+    the data usage instead of providing public access like American
+    Community Survey (ACS) data?
+3.  In a research paper, we tend to include two parts of
+    explanatory variables: (1) the **key explanatory variables (or
+    variables of interest)**, which directly address the research
+    question; and (2) the **control variables**, which account for other
+    factors that might also influence the response variable. In this
+    paper, what are the key explanatory variables and response variable?
+4.  What is the purpose of including local market characteristics
+    as part of $X$? Even though we do not have access to the data, which
+    variables could be multicollinear with local market characteristics?
+5.  Can we use normal linear regression for this study?
+6.  The follow picture shows model specification in page 8 of
+    this paper. Do you find any problem with this equation and
+    explanation, especially for the explanatory variable part?
+
+![Page 8 - Model Specification](assets/problem.png)
+
+#### Model Configurations and Results
+
+This study uses logistic regression, which we practiced with the HMDA
+data in the lab section above. We replace $Y$ with $\log(P/(1-P))$,
+where $P$ is the probability of $Y=1$. [This post from IBM is also
+helpful.](https://www.ibm.com/think/topics/logistic-regression) Think
+about this model:
+
+$$
+\log(\frac{P}{1-P}) = \beta_0 + \beta_1 X_1 + \beta_2 X_2
+$$
+
+1.  How should we interpret $\beta_1$?
+2.  In the result tables of this paper, they use **Odds Ratio**
+    rather than the coefficient of $X$. How could you calculate the
+    coefficient $\beta$ for Household Member Enters or Exits (with odd
+    ratio of 1.671)? The table below shows part of the results.
+3.  How much more likely are households with a compositional
+    change (a member entering or exiting) to move, compared to those
+    without, controlling for other factors?
+4.  What are the null and alternative hypotheses being tested by
+    the t-value (398.7) for “Household Member Enters or Exits” in Model
+    1? What is the meaning of '\*\*\*'?
+5.  They conducted at least three logistic regression models. Why
+    did they do that?
+6.  The authors only use tables to present results. What is one
+    way to visualize the adds ratio from this logistic model to show
+    uncertainty of the results? You can use a plot example to
+    illustrate.
+7.  The title of this paper uses *association* rather than
+    *effect*, *impact*, or *influence*. Authors are also very cautious
+    term usages in main text. What is the reason?
+
+![Table 5 - Logistic Regression Results](assets/model_results.png)
+
+---
+
+> **Looking ahead — Part B.** In Part B (released after the machine
+> learning lecture) we will revisit regression from the *prediction*
+> culture: we will deliberately set aside most of these assumptions and
+> use `tidymodels` with lasso and ridge regression, cross-validation,
+> and held-out test data to see which model predicts best on unseen
+> sales.
+
+## Acknowledgement
+
+The materials are developed by [Haoyu Yue](www.yuehaoyu.com) based
+materials from [Dr. Feiyang Sun at UC San Diego](https://fsun.ucsd.edu),
+Siman Ning and Christian Phillips at University of Washington, [Dr.
+Charles Lanfear at University of Cambridge](https://clanfear.github.io).
